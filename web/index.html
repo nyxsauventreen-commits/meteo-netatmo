@@ -32,6 +32,7 @@
           <div id="user-list" class="card theme-list" hidden>
             <a href="/guide">Guide</a>
             <button id="invite-open" type="button" hidden>Inviter quelqu'un</button>
+            <button id="notify-open" type="button">Mes notifications</button>
             <button id="password-open" type="button">Mon mot de passe</button>
             <button id="admin-open" type="button" hidden>Administration</button>
             <button id="logout" type="button">Se déconnecter</button>
@@ -78,6 +79,35 @@
         </div>
       </div>
       <p id="hint" class="muted"></p>
+      <section id="notify-section" class="notify-section add-station" aria-labelledby="notify-title">
+        <h3 id="notify-title" class="notify-title">Notifications</h3>
+        <form id="notify-form" class="notify-form">
+          <fieldset class="wide">
+            <legend>Où les recevoir</legend>
+            <label class="check"><input name="ntfy" type="checkbox"> Sur le téléphone, avec l'appli ntfy</label>
+            <p class="muted notify-help">Installez l'appli gratuite ntfy (Android ou iPhone), touchez « + » puis
+              abonnez-vous à ce sujet :</p>
+            <p class="topic-line"><code id="ntfy-topic"></code>
+              <button id="ntfy-copy" class="invite-copy" type="button">Copier</button></p>
+            <p class="muted notify-help">Gardez-le pour vous : qui le connaît peut lire vos notifications.</p>
+            <label class="check"><input name="email" type="checkbox"> Par e-mail</label>
+            <label class="notify-address">Adresse e-mail
+              <input name="address" type="email" maxlength="254" autocomplete="email">
+            </label>
+            <p id="email-off" class="muted" hidden>L'envoi d'e-mails n'est pas encore configuré : voir le guide.</p>
+          </fieldset>
+          <fieldset class="wide">
+            <legend>Quand prévenir</legend>
+            <div id="notify-events" class="notify-events"></div>
+            <p class="muted">Un message quand l'événement commence, puis plus rien jusqu'à ce qu'il soit terminé.</p>
+          </fieldset>
+          <div class="wide notify-buttons">
+            <button type="submit">Enregistrer</button>
+            <button id="notify-test" type="button">Envoyer un test</button>
+          </div>
+          <p id="notify-message" class="add-message" role="status"></p>
+        </form>
+      </section>
     </details>
     <details id="add-station" class="card add-station">
       <summary>Ajouter une station</summary>

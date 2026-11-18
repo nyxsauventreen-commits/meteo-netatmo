@@ -982,3 +982,23 @@ body.screen-shown { overflow: hidden; }
 /* One program, two modes: the server marks the pages of the local mode (no account). */
 .mode-local .online-only { display: none !important; }
 html:not(.mode-local) .local-only { display: none !important; }
+/* Notifications panel */
+.notify-section { margin: 14px 0 0; padding: 14px 0 0; border-top: 1px solid var(--border); }
+.notify-title { margin: 0; font-size: 15px; font-weight: 650; }
+.notify-form fieldset { display: grid; gap: 8px; min-width: 0; margin: 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; }
+.notify-form legend { padding: 0 4px; color: var(--ink); font-size: 14px; font-weight: 600; }
+.add-station .check { display: flex; gap: 8px; align-items: center; color: var(--ink); font-size: 14px; }
+.add-station .check input { width: auto; min-height: 0; }
+.notify-help { font-size: 13px; }
+.notify-help code { overflow-wrap: anywhere; }
+.notify-address { max-width: 360px; }
+.notify-events { display: grid; gap: 6px; }
+.notify-event { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 10px; align-items: center; min-height: 34px; }
+.notify-event .threshold { justify-content: flex-end; }
+.notify-event .threshold { display: flex; gap: 6px; align-items: center; color: var(--ink-2); font-size: 13px; }
+.add-station .notify-event .threshold input { width: 80px; min-height: 32px; padding: 4px 8px; }
+.notify-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.add-station .notify-buttons button + button { background: transparent; color: var(--ink); }
+.link-button { padding: 0; border: 0; background: none; color: var(--ink-2); font: inherit; text-decoration: underline; cursor: pointer; }.topic-line { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.topic-line code { padding: 4px 8px; border-radius: 6px; background: var(--hover); overflow-wrap: anywhere; }
+.notify-address[hidden] { display: none; }

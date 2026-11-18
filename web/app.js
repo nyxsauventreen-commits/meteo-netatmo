@@ -774,6 +774,9 @@ function renderNotices(data) {
   if (data.status.error) {
     items.push(notice('Problème de collecte', [el('span', '', data.status.error)], true));
   }
+  if (data.status.notify_error) {
+    items.push(notice('Notification non envoyée', [el('span', '', data.status.notify_error)], true));
+  }
   if (view.alertsOn && data.status.alerts_error) {
     items.push(notice('Alertes météo indisponibles pour l’instant', [
       el('span', '', 'Vérifiez les vigilances officielles sur meteofrance.com. Nouvel essai automatique.'),
@@ -2147,6 +2150,7 @@ function contentKey(data) {
     data.status.wind,
     data.status.forecast,
     data.status.alerts_error,
+    data.status.notify_error,
     data.announcement,
     data.neighbours_allowed,
     view.hoursOn,
@@ -2197,6 +2201,123 @@ async function changePassword(event) {
     message.textContent = 'Serveur injoignable, réessayez.';
   } finally {
     button.disabled = false;
+  }
+}
+
+/* ---------- Notifications ---------- */
+
+let notifySettings = null;
+
+function notifyRow(event, settings) {
+  const row = el('div', 'notify-event');
+  const check = el('label', 'check');
+  const box = el('input');
+  box.type = 'checkbox';
+  box.name = 'event';
+  box.value = event.key;
+  box.checked = settings.events.includes(event.key);
+  check.append(box, ` ${event.label}`);
+  row.append(check);
+  if (event.limits) {
+    const threshold = el('label', 'threshold');
+    const input = el('input');
+    input.type = 'number';
+    input.name = `threshold-${event.key}`;
+    [input.min, input.max] = event.limits;
+    input.step = event.key === 'offline' ? '1' : '0.5';
+    input.value = settings.thresholds[event.key];
+    const word = { frost: 'à', heat: 'dès', rain: 'dès', wind: 'dès', offline: 'après' }[event.key];
+    threshold.append(word, input, event.unit);
+    row.append(threshold);
+  }
+  return row;
+}
+
+function showNotifySettings(settings) {
+  notifySettings = settings;
+  const form = document.getElementById('notify-form');
+  form.elements.ntfy.checked = settings.ntfy;
+  form.elements.email.checked = settings.email;
+  form.elements.email.disabled = !settings.email_available;
+  form.elements.address.value = settings.address;
+  document.getElementById('email-off').hidden = settings.email_available;
+  form.querySelector('.notify-address').hidden = !settings.email_available;
+  document.getElementById('ntfy-topic').textContent = settings.topic;
+  document.getElementById('notify-events').replaceChildren(...settings.events_known.map((event) => notifyRow(event, settings)));
+}
+
+async function loadNotifications() {
+  const message = document.getElementById('notify-message');
+  try {
+    const response = await fetch('/api/notifications');
+    if (!response.ok) throw new Error();
+    showNotifySettings(await response.json());
+    message.textContent = '';
+  } catch {
+    message.textContent = 'Serveur injoignable, réessayez.';
+  }
+}
+
+async function saveNotifications(event) {
+  event.preventDefault();
+  const form = event.target;
+  const message = document.getElementById('notify-message');
+  const thresholds = {};
+  for (const input of form.querySelectorAll('input[type="number"]')) {
+    thresholds[input.name.replace('threshold-', '')] = Number(input.value);
+  }
+  const body = {
+    ntfy: form.elements.ntfy.checked,
+    email: form.elements.email.checked,
+    address: form.elements.address.value.trim(),
+    events: [...form.querySelectorAll('input[name="event"]:checked')].map((box) => box.value),
+    thresholds,
+  };
+  try {
+    const response = await fetch('/api/notifications', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const answer = await response.json();
+    if (!response.ok) throw new Error(answer.error);
+    showNotifySettings({ ...notifySettings, ...answer });
+    message.textContent = 'Enregistré.';
+  } catch (error) {
+    message.textContent = error.message || 'Serveur injoignable, réessayez.';
+  }
+}
+
+async function testNotifications() {
+  const message = document.getElementById('notify-message');
+  const button = document.getElementById('notify-test');
+  button.disabled = true;
+  message.textContent = 'Envoi…';
+  try {
+    const response = await fetch('/api/notifications/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    const answer = await response.json();
+    if (!response.ok) throw new Error(answer.error);
+    const names = { ntfy: 'ntfy', email: 'e-mail' };
+    message.textContent = Object.entries(answer.results)
+      .map(([channel, error]) => `${names[channel]} : ${error || 'envoyé'}`).join(' · ');
+  } catch (error) {
+    message.textContent = error.message || 'Serveur injoignable, réessayez.';
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function copyTopic() {
+  const topic = document.getElementById('ntfy-topic').textContent;
+  try {
+    await navigator.clipboard.writeText(topic);
+    document.getElementById('notify-message').textContent = 'Sujet copié.';
+  } catch {
+    document.getElementById('notify-message').textContent = 'Copiez le sujet à la main.';
   }
 }
 
@@ -2411,6 +2532,18 @@ document.getElementById('user-open').addEventListener('click', (event) => {
   toggleUserList();
 });
 document.getElementById('password-open').addEventListener('click', () => openPanel('password-panel'));
+// The notifications are a part of « Dates, courbes et options », read when that panel opens.
+document.getElementById('notify-open').addEventListener('click', () => {
+  document.getElementById('options').open = true;
+  document.getElementById('notify-section').scrollIntoView({ block: 'start' });
+  toggleUserList(false);
+});
+document.getElementById('options').addEventListener('toggle', (event) => {
+  if (event.target.open && !notifySettings) loadNotifications();
+});
+document.getElementById('notify-form').addEventListener('submit', saveNotifications);
+document.getElementById('notify-test').addEventListener('click', testNotifications);
+document.getElementById('ntfy-copy').addEventListener('click', copyTopic);
 document.getElementById('admin-open').addEventListener('click', () => { location.href = '/admin'; });
 document.getElementById('invite-open').addEventListener('click', () => openPanel('invite-panel'));
 document.getElementById('invite-panel').addEventListener('toggle', (event) => {

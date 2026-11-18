@@ -317,6 +317,27 @@ class Web(ServerCase):
             self.assertEqual(response.status, 422)
         self.assertIn(b"}(null));", self.call("GET", "/settings.js", cookie=cookie)[1])
 
+    def test_notifications_belong_to_their_account(self):
+        first, second = self.sign_up("Sam"), self.sign_up("Alex")
+        self.assertEqual(self.call("GET", "/api/notifications")[0].status, 401)
+        self.assertEqual(self.call("POST", "/api/notifications/test", {})[0].status, 401)
+        response, content = self.call("PATCH", "/api/notifications", {"ntfy": True, "events": ["frost"]}, first)
+        self.assertEqual(response.status, 200)
+        mine = json.loads(self.call("GET", "/api/notifications", cookie=first)[1])
+        other = json.loads(self.call("GET", "/api/notifications", cookie=second)[1])
+        self.assertEqual((mine["ntfy"], mine["events"], other["ntfy"]), (True, ["frost"], False))
+        self.assertNotEqual(mine["topic"], other["topic"])
+        self.assertFalse(mine["email_available"])
+        refused = self.call("PATCH", "/api/notifications", {"email": True, "address": "x@example.fr"}, first)[0]
+        self.assertEqual(refused.status, 422)
+
+    def test_notification_problems_stay_in_the_admin_log(self):
+        cookie = self.sign_up("Sam")
+        with self.dashboard.lock:
+            self.dashboard.status["notify_error"] = "E-mail non envoyé : sam@example.fr"
+        data = json.loads(self.call("GET", "/api/data", cookie=cookie)[1])
+        self.assertNotIn("notify_error", data["status"])
+
     def test_guest_cannot_save_settings(self):
         self.assertEqual(self.call("PATCH", "/api/settings", {"settings": {}})[0].status, 401)
         self.assertIn(b"}(null));", self.call("GET", "/settings.js")[1])

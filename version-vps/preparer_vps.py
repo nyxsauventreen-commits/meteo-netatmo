@@ -20,7 +20,7 @@ CONNECT_TIMEOUT = 600
 REMOTE = "/opt/meteo-perso"
 PROGRAM = [
     "app.py", "accounts.py", "netatmo.py", "stations.py", "wind_estimate.py",
-    "forecast.py", "barometer.py", "alerts.py", "neighbours.py", "meteoalarm-ca.pem", "stats.py",
+    "forecast.py", "barometer.py", "alerts.py", "neighbours.py", "notify.py", "meteoalarm-ca.pem", "stats.py",
     "config.example.json", "web",
 ]
 DATA_FILES = ["config.json", "meteo.db", "token.json"]

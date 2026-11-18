@@ -32,6 +32,7 @@ import barometer
 import forecast
 import neighbours
 import netatmo
+import notify
 import stations as station_tools
 import stats
 import wind_estimate
@@ -138,7 +139,9 @@ SETTING_KEY = re.compile(r"^meteo-[a-z-]{1,30}$")
 MAX_SETTINGS = 30
 MAX_SETTING_LENGTH = 300
 INVITE_BYTES = 9  # 12 characters, impossible to guess
-APP_VERSION = "2.1"
+APP_VERSION = "2.2"
+NOTIFY_TEST_EVERY = 60  # seconds between two test messages of one person
+NOTIFY_MAX_PER_POLL = 5  # messages per person and per collection, at most
 DEMO_DAYS = 800
 DEMO_DETAILED_DAYS = 14
 DEMO_STATIONS = [
@@ -356,12 +359,15 @@ class Dashboard:
             config.get("refresh_token", ""),
         )
         self.oauth_state = None  # local mode: the Netatmo connection is made from the page
+        self.smtp = notify.smtp_settings(config, os.environ)
+        self.ntfy_server = config.get("ntfy_server") or notify.NTFY_SERVER
+        self.test_sent = {}  # user id -> time of the last test message
         self.wake = threading.Event()
         self.lock = threading.Lock()
         self.status = {
             "last_poll": None, "next_poll": None, "error": None, "stations": {},
             "history": {}, "history_running": None, "history_rows": 0, "wind": {}, "forecast": {},
-            "alerts_error": None,
+            "alerts_error": None, "notify_error": None,
         }
         with self.connect() as db:
             columns = ", ".join(f"{name} REAL" for name in COLUMNS)
@@ -400,6 +406,14 @@ class Dashboard:
             )
             db.execute("CREATE TABLE IF NOT EXISTS invites (user_id INTEGER PRIMARY KEY, code TEXT NOT NULL UNIQUE)")
             db.execute("CREATE TABLE IF NOT EXISTS options (name TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS notify_settings (user_id INTEGER PRIMARY KEY, settings TEXT NOT NULL)"
+            )
+            # The events already sent and not over yet, so that each one is sent once.
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS notify_state (user_id INTEGER NOT NULL, station_id TEXT NOT NULL, "
+                "key TEXT NOT NULL, since INTEGER NOT NULL, PRIMARY KEY (user_id, station_id, key)) WITHOUT ROWID"
+            )
             db.execute(
                 "CREATE TABLE IF NOT EXISTS error_log (ts INTEGER NOT NULL, kind TEXT NOT NULL, "
                 "station_id TEXT NOT NULL, message TEXT NOT NULL)"
@@ -476,6 +490,8 @@ class Dashboard:
             db.execute("DELETE FROM user_stations WHERE user_id = ?", (user_id,))
             db.execute("DELETE FROM user_settings WHERE user_id = ?", (user_id,))
             db.execute("DELETE FROM invites WHERE user_id = ?", (user_id,))
+            db.execute("DELETE FROM notify_settings WHERE user_id = ?", (user_id,))
+            db.execute("DELETE FROM notify_state WHERE user_id = ?", (user_id,))
         self.accounts.delete_user(user_id)
 
     @property
@@ -618,6 +634,8 @@ class Dashboard:
             "next_poll": status["next_poll"],
             "error": status["error"],
             "alerts_error": status["alerts_error"],
+            "notify_error": status["notify_error"],
+            "email_available": bool(self.smtp),
             "netatmo_calls": netatmo.calls_last_hour(),
             "netatmo_limit": NETATMO_HOURLY_LIMIT,
             "database_bytes": sum(path.stat().st_size for path in files if path.exists()),
@@ -712,6 +730,119 @@ class Dashboard:
                 "INSERT OR REPLACE INTO user_settings (user_id, settings) VALUES (?, ?)",
                 (user_id, json.dumps(settings)),
             )
+
+    def notification_settings(self, user_id):
+        """The notification choices of a person; the first time, defaults with a private ntfy topic."""
+        with self.connect() as db:
+            row = db.execute("SELECT settings FROM notify_settings WHERE user_id = ?", (user_id,)).fetchone()
+            if row:
+                return {**notify.default_settings(), **json.loads(row["settings"])}
+            settings = notify.default_settings()
+            db.execute(
+                "INSERT INTO notify_settings (user_id, settings) VALUES (?, ?)", (user_id, json.dumps(settings)),
+            )
+            return settings
+
+    def notifications_page(self, user_id):
+        return {
+            **self.notification_settings(user_id),
+            "email_available": bool(self.smtp),
+            "ntfy_server": self.ntfy_server,
+            "events_known": [
+                {"key": key, "label": label, "unit": unit, "limits": notify.LIMITS.get(key)}
+                for key, (label, _, unit) in notify.EVENTS.items()
+            ],
+        }
+
+    def save_notifications(self, user_id, form):
+        settings = notify.clean_settings(form, self.notification_settings(user_id))
+        if settings["email"] and not self.smtp:
+            raise notify.NotifyError("L'envoi d'e-mails n'est pas configuré sur ce serveur")
+        with self.connect() as db:
+            db.execute(
+                "UPDATE notify_settings SET settings = ? WHERE user_id = ?", (json.dumps(settings), user_id),
+            )
+            # Events left aside are forgotten: switched on again, they are sent at once if still going on.
+            for key in set(notify.EVENTS) - set(settings["events"]):
+                pattern = "vigilance:%" if key == "vigilance" else key
+                db.execute("DELETE FROM notify_state WHERE user_id = ? AND key LIKE ?", (user_id, pattern))
+        return settings
+
+    def deliver(self, settings, title, message, urgent=False):
+        """Send on every channel the person chose; return {channel: error or None}."""
+        results = {}
+        if settings["ntfy"]:
+            try:
+                notify.send_ntfy(settings["topic"], title, message, self.ntfy_server, urgent)
+                results["ntfy"] = None
+            except notify.NotifyError as err:
+                results["ntfy"] = str(err)
+        if settings["email"]:
+            try:
+                notify.send_email(self.smtp, settings["address"], title, message)
+                results["email"] = None
+            except notify.NotifyError as err:
+                results["email"] = str(err)
+        return results
+
+    def send_test(self, user_id):
+        now = time.time()
+        if now - self.test_sent.get(user_id, 0) < NOTIFY_TEST_EVERY:
+            raise notify.NotifyError("Un test par minute au plus : patientez un peu")
+        settings = self.notification_settings(user_id)
+        if not (settings["ntfy"] or settings["email"]):
+            raise notify.NotifyError("Choisissez d'abord ntfy, l'e-mail ou les deux, puis enregistrez")
+        self.test_sent[user_id] = now
+        return self.deliver(settings, "Test : notifications météo", "Les notifications arrivent bien ici.")
+
+    def check_notifications(self, now=None):
+        """Send what has just started for each person; called after each collection."""
+        now = int(now or time.time())
+        with self.connect() as db:
+            rows = db.execute("SELECT user_id, settings FROM notify_settings").fetchall()
+        problems = []
+        for row in rows:
+            user_id = row["user_id"]
+            if self.local != (user_id == LOCAL_USER["id"]):
+                continue  # the list of the other mode, in a database copied from a PC
+            settings = {**notify.default_settings(), **json.loads(row["settings"])}
+            if not (settings["ntfy"] or settings["email"]) or not settings["events"]:
+                continue
+            sent = 0
+            for station in self.user_stations(user_id):
+                with self.connect() as db:
+                    latest = db.execute(
+                        "SELECT * FROM measures WHERE station_id = ? ORDER BY ts DESC LIMIT 1", (station["id"],),
+                    ).fetchone()
+                    active = {
+                        item["key"] for item in db.execute(
+                            "SELECT key FROM notify_state WHERE user_id = ? AND station_id = ?",
+                            (user_id, station["id"]),
+                        )
+                    }
+                events = notify.weather_events(
+                    settings, station, dict(latest) if latest else None, self.alerts.get(station["id"], []), now, active,
+                )
+                with self.connect() as db:
+                    for key in active - set(events):  # over: it may be sent again next time
+                        db.execute(
+                            "DELETE FROM notify_state WHERE user_id = ? AND station_id = ? AND key = ?",
+                            (user_id, station["id"], key),
+                        )
+                for key, (title, message) in events.items():
+                    if key in active or sent >= NOTIFY_MAX_PER_POLL:
+                        continue
+                    results = self.deliver(settings, title, message, urgent=key.startswith("vigilance"))
+                    problems += [error for error in results.values() if error]
+                    if any(error is None for error in results.values()):
+                        sent += 1
+                        with self.connect() as db:
+                            db.execute(
+                                "INSERT OR REPLACE INTO notify_state (user_id, station_id, key, since) VALUES (?, ?, ?, ?)",
+                                (user_id, station["id"], key, now),
+                            )
+        with self.lock:
+            self.status["notify_error"] = problems[0][:200] if problems else None
 
     def import_config_stations(self, user_id, wanted=None):
         """Give an account the stations of config.json, in their order and with their colours."""
@@ -1100,13 +1231,22 @@ class Dashboard:
         with self.lock:
             self.status["history"] = dict(self.history_errors)
             self.status["wind"] = dict(self.wind_errors)
+        try:
+            self.check_notifications()
+        except Exception as err:  # the collection goes on whatever happens to the messages
+            with self.lock:
+                self.status["notify_error"] = str(err)[:200]
         self.log_changes()
 
     def log_changes(self):
         """Write each new collection problem, and its end, in the error log; repeats are left out."""
         with self.lock:
             status = dict(self.status)
-        current = {("Netatmo", ""): status["error"], ("Alertes météo", ""): status["alerts_error"]}
+        current = {
+            ("Netatmo", ""): status["error"],
+            ("Alertes météo", ""): status["alerts_error"],
+            ("Notifications", ""): status["notify_error"],
+        }
         for kind, key in (("Mesures", "stations"), ("Historique", "history"), ("Vent estimé", "wind"), ("Prévisions", "forecast")):
             for station_id, message in status[key].items():
                 current[(kind, station_id)] = message
@@ -1328,6 +1468,8 @@ class Dashboard:
             status = dict(self.status)
         for key in ("stations", "history", "wind", "forecast"):
             status[key] = {sid: message for sid, message in status[key].items() if sid in names}
+        if not self.local:
+            status.pop("notify_error", None)  # may name someone's address: the administrator sees it in the log
         status["history_running"] = names.get(status["history_running"])
         return status
 
@@ -1702,6 +1844,11 @@ def make_handler(app, invite_code="", secure_cookie=True, password="", port=8765
                         "owner": app.accounts.admin_id(),
                         "now": int(time.time()),
                     })
+            elif url.path == "/api/notifications":
+                if user:
+                    self.reply_json(200, app.notifications_page(user["id"]))
+                else:
+                    self.refuse_guest()
             elif url.path == "/api/invite":
                 if not user:
                     self.refuse_guest()
@@ -1821,6 +1968,8 @@ def make_handler(app, invite_code="", secure_cookie=True, password="", port=8765
                 self.add_station(form)
             elif self.path == "/api/password":
                 self.change_password(form)
+            elif self.path == "/api/notifications/test":
+                self.notification_test()
             elif self.path == "/api/invite":
                 self.renew_own_code()
             elif self.path == "/api/admin/code":
@@ -1877,6 +2026,18 @@ def make_handler(app, invite_code="", secure_cookie=True, password="", port=8765
                 self.reply_json(422, {"error": "Utilisateur inconnu"})
                 return
             self.reply_json(200, {"code": app.renew_code(user_id)})
+
+        def notification_test(self):
+            user = self.current_user()
+            if not user:
+                self.refuse_guest()
+                return
+            try:
+                results = app.send_test(user["id"])
+            except notify.NotifyError as err:
+                self.reply_json(422, {"error": str(err)})
+            else:
+                self.reply_json(200, {"results": results})
 
         def change_password(self, form):
             user = self.current_user()
@@ -1955,6 +2116,13 @@ def make_handler(app, invite_code="", secure_cookie=True, password="", port=8765
                     self.reply_json(422, {"error": str(err)})
                 else:
                     self.reply_json(200, {})
+            elif self.path == "/api/notifications":
+                try:
+                    settings = app.save_notifications(user["id"], form)
+                except notify.NotifyError as err:
+                    self.reply_json(422, {"error": str(err)})
+                else:
+                    self.reply_json(200, settings)
             elif self.path == "/api/stations/order":
                 try:
                     app.reorder_stations(user["id"], [str(item) for item in form.get("ids", [])])

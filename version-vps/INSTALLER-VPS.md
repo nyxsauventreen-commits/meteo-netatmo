@@ -184,6 +184,23 @@ sert qu'une fois : un nouveau le remplace dès qu'une personne s'inscrit avec.
 `METEO_INVITE_CODE` ne sert plus qu'au démarrage : changer sa valeur ensuite ne change pas les
 codes.
 
+## Notifications par e-mail
+
+Les notifications ntfy marchent sans réglage. Pour l'e-mail, le site a besoin d'une boîte d'envoi :
+
+1. Créez une adresse Gmail réservée au site. Activez la validation en deux étapes, puis créez un
+   **mot de passe d'application** dans le compte Google (Sécurité, Mots de passe des applications).
+2. Sur le serveur, ouvrez la configuration : `sudo nano /opt/meteo-perso/data/config.json`.
+3. Ajoutez ce bloc après la ligne `"client_secret"`, avec l'adresse et le mot de passe d'application :
+
+   ```json
+   "smtp": { "server": "smtp.gmail.com", "port": 465, "user": "", "password": "", "sender_name": "Météo" },
+   ```
+
+4. Enregistrez (Ctrl+O, Entrée, Ctrl+X), puis redémarrez : `sudo docker restart meteo-perso`.
+
+Chacun peut ensuite cocher « Par e-mail » dans **Dates, courbes et options**, partie Notifications, et envoyer un test. Un envoi raté
+apparaît dans le journal de la page d'administration.
 ## Sauvegarder
 
 Tout ce qui change se trouve dans `/opt/meteo-perso/data`, comptes compris. Copiez ce dossier

@@ -1,4 +1,5 @@
 import json
+import re
 import sqlite3
 import tempfile
 import unittest
@@ -73,6 +74,12 @@ class Preparer(unittest.TestCase):
     def test_every_program_file_exists(self):
         for name in preparer_vps.PROGRAM:
             self.assertTrue((preparer_vps.PROGRAM_FOLDER / name).exists(), name)
+
+    def test_every_module_of_the_program_is_sent(self):
+        source = (preparer_vps.PROGRAM_FOLDER / "app.py").read_text(encoding="utf-8")
+        for name in re.findall(r"^import (\w+)", source, re.MULTILINE):
+            if (preparer_vps.PROGRAM_FOLDER / f"{name}.py").exists():
+                self.assertIn(f"{name}.py", preparer_vps.PROGRAM)
 
     def test_upload_order_ends_by_giving_files_to_the_container(self):
         commands = preparer_vps.upload_commands("me@vps")

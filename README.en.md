@@ -27,6 +27,9 @@ the weather sources listed below.
 - **Sky and forecast**, hour by hour and for 15 days, from [Open-Meteo](https://open-meteo.com/).
   Stations without an anemometer get an estimated wind.
 - **Official warnings** in yellow, orange and red, from [MeteoAlarm](https://meteoalarm.org/).
+- **Notifications** on the phone, with the [ntfy](https://ntfy.sh/) app, or by email: warnings,
+  frost, heat, heavy rain, gusts and a silent station. Each person chooses the events and the
+  thresholds.
 - **Barometer**: a trend for the next 6 to 12 hours, worked out from the station's own pressure
   only.
 - **Neighbouring stations**: the median of the public stations 1 to 10 km away. It helps spot a
@@ -39,7 +42,7 @@ the weather sources listed below.
 
 ## One program, two modes
 
-The same program (version 2.1) runs on a PC or on a server. You choose the mode when you start
+The same program (version 2.2) runs on a PC or on a server. You choose the mode when you start
 it.
 
 | | Local mode (default) | Online mode |
@@ -103,7 +106,9 @@ port. The `version-vps/` folder only holds the install and update tools.
   - the official Netatmo API;
   - Open-Meteo, for the forecast and the estimated wind;
   - MeteoAlarm, for the warnings;
-  - `data.geopf.fr` and `geocoding-api.open-meteo.com`, to look up a town.
+  - `data.geopf.fr` and `geocoding-api.open-meteo.com`, to look up a town;
+  - only when someone turns notifications on: `ntfy.sh` (or the ntfy server set in `ntfy_server`)
+    and the mail server of the `smtp` block in `config.json`.
 - There are no ads, no analytics, and no scripts loaded from other sites.
 - `meteoalarm-ca.pem` is a public certificate. MeteoAlarm's server does not send its
   intermediate certificate, so this file is needed to check the connection to it.

@@ -4,5 +4,6 @@
   "poll_minutes": 10,
   "history_days": 730,
   "port": 8765,
+  "smtp": { "server": "smtp.gmail.com", "port": 465, "user": "", "password": "", "sender_name": "Météo" },
   "stations": []
 }
