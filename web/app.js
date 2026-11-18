@@ -131,6 +131,7 @@ function saveRadius(radius) {
   } catch {
     /* the choice just won't be remembered */
   }
+  syncSettings();
 }
 
 function readPeriod() {
@@ -148,6 +149,7 @@ function savePeriod(hours) {
   } catch {
     /* the choice just won't be remembered */
   }
+  syncSettings();
 }
 
 function readSet(key) {
@@ -164,6 +166,7 @@ function saveSet(key, set) {
   } catch {
     /* the choice just won't be remembered */
   }
+  syncSettings();
 }
 
 function readFlag(key, fallback) {
@@ -181,6 +184,7 @@ function saveFlag(key, value) {
   } catch {
     /* the choice just won't be remembered */
   }
+  syncSettings();
 }
 
 function el(tag, className, text) {
@@ -325,6 +329,64 @@ function moonLine(ts) {
   line.title = `${info.name}, éclairée à ${Math.round(info.lit * 100)} %. ${event} vers le ${when}.`;
   line.append(moonIcon(info), ` ${info.name}`, el('span', 'sky-detail', ` · ${event.toLowerCase()} vers le ${when}`));
   return line;
+}
+
+/* ---------- Header icon that follows the time of day ---------- */
+
+const DAY_PARTS = {
+  morning: { label: 'matin', top: '#7db7f4', bottom: '#ffd09c', sun: [14, 19], sunColor: '#ffd35a', cloud: '#ffffff' },
+  afternoon: { label: 'après-midi', top: '#2f80e8', bottom: '#74b8f7', sun: [31, 16], sunColor: '#ffc93c', cloud: '#ffffff' },
+  evening: { label: 'soirée', top: '#4a3d92', bottom: '#f2885a', sun: [35, 22], sunColor: '#ffa743', cloud: '#f8e3ec' },
+  night: { label: 'nuit', top: '#0a1230', bottom: '#2a3672', moon: [30, 15], cloud: '#7d89b3' },
+};
+const STARS = [[11, 10, 1.2], [20, 6, 0.9], [41, 27, 1], [8, 21, 0.8]];
+// Hour at which each part of the day starts, on this device's clock.
+const DAY_PART_HOURS = [[22, 'night'], [18, 'evening'], [12, 'afternoon'], [6, 'morning']];
+let brandPart = null;
+
+function dayPart(date) {
+  const found = DAY_PART_HOURS.find(([hour]) => date.getHours() >= hour);
+  return found ? found[1] : 'night'; // before 6 h
+}
+
+function brandIcon(part) {
+  const sky = DAY_PARTS[part];
+  const id = `brand-${part}`;
+  const icon = svg('svg', { class: 'brand-icon', viewBox: '0 0 48 48', width: 48, height: 48, 'aria-hidden': 'true' });
+  const defs = svg('defs');
+  const gradient = svg('linearGradient', { id: `${id}-sky`, x1: 0, y1: 0, x2: 0, y2: 1 });
+  gradient.append(svg('stop', { offset: 0, 'stop-color': sky.top }), svg('stop', { offset: 1, 'stop-color': sky.bottom }));
+  defs.append(gradient);
+  icon.append(defs, svg('rect', { width: 48, height: 48, rx: 11, fill: `url(#${id}-sky)` }));
+  if (sky.moon) {
+    const [x, y] = sky.moon;
+    const mask = svg('mask', { id: `${id}-moon` });
+    mask.append(svg('rect', { width: 48, height: 48, fill: '#fff' }), svg('circle', { cx: x + 4, cy: y - 3, r: 6.5, fill: '#000' }));
+    defs.append(mask);
+    icon.append(...STARS.map(([cx, cy, r]) => svg('circle', { cx, cy, r, fill: '#fff', opacity: 0.85 })));
+    icon.append(svg('circle', { cx: x, cy: y, r: 7.5, fill: '#f3efcf', mask: `url(#${id}-moon)` }));
+  } else {
+    const [x, y] = sky.sun;
+    icon.append(
+      svg('circle', { cx: x, cy: y, r: 12.5, fill: sky.sunColor, opacity: 0.3 }),
+      svg('circle', { cx: x, cy: y, r: 8.5, fill: sky.sunColor }),
+    );
+  }
+  icon.append(svg('path', { d: CLOUD_PATH, fill: sky.cloud, transform: 'translate(-1 7)' }));
+  return icon;
+}
+
+function renderBrand() {
+  const part = dayPart(new Date());
+  if (part === brandPart) return;
+  brandPart = part;
+  const brand = document.querySelector('.brand');
+  const icon = brandIcon(part);
+  brand.querySelector('img, .brand-icon').replaceWith(icon);
+  brand.title = `Météo · ${DAY_PARTS[part].label}`;
+  // The browser tab shows the same sky; an installed app keeps its own icon.
+  const tab = document.querySelector('link[rel="icon"]');
+  if (tab) tab.href = `data:image/svg+xml,${encodeURIComponent(new XMLSerializer().serializeToString(icon))}`;
 }
 
 function renderSky() {
@@ -680,20 +742,34 @@ function setupSteps() {
   return list;
 }
 
-function renderNotices(data) {
-  const items = [];
+// On the PC, the person running the program connects Netatmo; on the site, the administrator does.
+function setupNotices(data) {
   if (data.demo) {
-    items.push(notice('Mode démonstration : ces valeurs sont simulées', [
+    return [notice('Mode démonstration : ces valeurs sont simulées', [
       el('span', '', 'Aucune donnée ne vient de Netatmo. Lancez le dashboard sans --demo pour les vraies mesures.'),
+    ])];
+  }
+  if (data.setup === 'ok') return [];
+  if (data.mode !== 'local') {
+    return [notice('La collecte Netatmo est arrêtée', [
+      el('span', '', 'Le serveur n’est plus connecté à Netatmo : prévenez son administrateur.'),
+    ])];
+  }
+  if (data.setup === 'config') return [notice('Accès Netatmo à configurer', [setupSteps()])];
+  const link = el('a', '', 'Connecter mon compte Netatmo');
+  link.href = '/connecter';
+  return [notice('Dernière étape', [link])];
+}
+
+function renderNotices(data) {
+  const items = setupNotices(data);
+  if (!data.stations.length) {
+    items.push(notice('Bienvenue', [
+      el('span', '', 'Ajoutez votre première station ci-dessous. Le guide explique comment trouver son lien.'),
     ]));
   }
-  if (data.setup === 'config') {
-    items.push(notice('Accès Netatmo à configurer', [setupSteps()]));
-  }
-  if (data.setup === 'auth') {
-    const link = el('a', '', 'Connecter mon compte Netatmo');
-    link.href = '/connecter';
-    items.push(notice('Dernière étape', [link]));
+  if (data.announcement) {
+    items.push(notice('Message de l’administrateur', [el('span', '', data.announcement)]));
   }
   if (data.status.error) {
     items.push(notice('Problème de collecte', [el('span', '', data.status.error)], true));
@@ -1057,6 +1133,19 @@ function recordTiles({ records }) {
   ];
 }
 
+// Rain of the month, season and year so far, compared with the same dates a year earlier.
+function rainCalendarTiles(calendar) {
+  return ['month', 'season', 'year'].map((key) => {
+    const span = calendar[key];
+    const [year, month, date] = span.since.split('-').map(Number);
+    const since = new Date(year, month - 1, date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
+    const note = span.last_year === null
+      ? `depuis le ${since}`
+      : `${number(span.last_year, 1)} mm l’an dernier à la même date`;
+    return statTile(`Pluie ${span.label}`, `${number(span.total, 1)} mm`, note);
+  });
+}
+
 function neighbourTiles({ gaps, count, low, high, warmer_than: warmerThan }) {
   const pressureOff = gaps.pressure !== null && Math.abs(gaps.pressure) >= PRESSURE_OFFSET;
   return [
@@ -1082,6 +1171,9 @@ function stationStats(item, station) {
   card.append(
     head,
     statGrid('Sur la période affichée', periodTiles(item)),
+  );
+  if (item.rain_calendar) card.append(statGrid('Cumuls de pluie à ce jour', rainCalendarTiles(item.rain_calendar)));
+  card.append(
     statGrid(`Records depuis le ${dayLabel(item.oldest)}`, recordTiles(item)),
     neighbourStats(item),
   );
@@ -1229,7 +1321,6 @@ function renderStations(data) {
   );
   const panel = document.getElementById('add-station');
   panel.hidden = data.demo;
-  document.getElementById('add-open').hidden = data.demo;
   if (!data.stations.length) panel.open = true;
 }
 
@@ -1415,7 +1506,7 @@ async function addStation(event) {
     message.textContent = `${answer.name} ajoutée (${answer.place}).`;
     refresh(true);
   } catch {
-    message.textContent = 'Dashboard injoignable : le programme est-il lancé ?';
+    message.textContent = 'Serveur injoignable, réessayez.';
   } finally {
     button.disabled = false;
   }
@@ -1424,10 +1515,6 @@ async function addStation(event) {
 function renderStatus() {
   const data = view.data;
   if (!data) return;
-  if (data.setup !== 'ok') {
-    document.getElementById('status').textContent = 'Collecte en attente de la configuration';
-    return;
-  }
   if (data.status.history_running) {
     document.getElementById('status').textContent = `Récupération de l’historique de ${data.status.history_running}…`;
     return;
@@ -2060,6 +2147,8 @@ function contentKey(data) {
     data.status.wind,
     data.status.forecast,
     data.status.alerts_error,
+    data.announcement,
+    data.neighbours_allowed,
     view.hoursOn,
     view.forecastOn,
     view.alertsOn,
@@ -2085,9 +2174,105 @@ function shownData() {
   return { ...view.data, stations: shownStations(view.data) };
 }
 
+async function changePassword(event) {
+  event.preventDefault();
+  const form = event.target;
+  const message = document.getElementById('password-message');
+  const button = form.querySelector('button');
+  button.disabled = true;
+  message.textContent = '';
+  try {
+    const response = await fetch('/api/password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(Object.fromEntries(new FormData(form))),
+    });
+    if (response.ok) {
+      form.reset();
+      message.textContent = 'Mot de passe changé.';
+    } else {
+      message.textContent = (await response.json()).error;
+    }
+  } catch {
+    message.textContent = 'Serveur injoignable, réessayez.';
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function copyInviteLink() {
+  const code = document.getElementById('my-code').textContent;
+  const link = `${location.origin}/login?code=${encodeURIComponent(code)}`;
+  const message = document.getElementById('invite-message');
+  try {
+    await navigator.clipboard.writeText(link);
+    message.textContent = 'Lien copié : il ne servira qu’à une seule personne.';
+  } catch {
+    message.replaceChildren('Copiez ce lien : ', el('code', 'admin-password', link));
+  }
+}
+
+function showInvite(code) {
+  document.getElementById('my-code').textContent = code || '';
+  document.getElementById('invite-body').hidden = !code;
+  document.getElementById('invite-message').textContent = code ? '' : 'Les invitations sont fermées pour le moment.';
+}
+
+async function loadInvite() {
+  try {
+    const response = await fetch('/api/invite');
+    showInvite((await response.json()).code);
+  } catch {
+    document.getElementById('invite-message').textContent = 'Serveur injoignable, réessayez.';
+  }
+}
+
+async function renewInvite() {
+  if (!confirm('Créer un nouveau code ? L’ancien ne marchera plus.')) return;
+  try {
+    const response = await fetch('/api/invite', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    const answer = await response.json();
+    if (!response.ok) throw new Error(answer.error);
+    showInvite(answer.code);
+    document.getElementById('invite-message').textContent = 'Nouveau code créé : l’ancien ne marche plus.';
+  } catch (error) {
+    document.getElementById('invite-message').textContent = error.message || 'Serveur injoignable, réessayez.';
+  }
+}
+
+async function logout() {
+  await fetch('/api/logout', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
+  });
+  forgetSettings();
+  location.href = '/login';
+}
+
+function toggleUserList(force) {
+  const list = document.getElementById('user-list');
+  list.hidden = force === undefined ? !list.hidden : !force;
+  document.getElementById('user-open').setAttribute('aria-expanded', String(!list.hidden));
+}
+
+function openPanel(id) {
+  const panel = document.getElementById(id);
+  panel.open = true;
+  panel.scrollIntoView({ block: 'center' });
+  toggleUserList(false);
+}
+
 function renderContent() {
   const data = view.data;
   const shown = shownData();
+  document.getElementById('user-open').textContent = `${data.user} ▾`;
+  document.getElementById('admin-open').hidden = !data.is_admin;
+  document.getElementById('invite-open').hidden = !(data.invites_open || data.is_admin);
   if (view.pinned !== null && (view.pinned < data.since || view.pinned > data.until)) view.pinned = null;
   renderPeriods();
   renderNotices(data);
@@ -2108,6 +2293,7 @@ function renderClock() {
     weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit',
   });
   if (view.data) renderSky(); // the moon moves on, and the day changes at midnight
+  renderBrand();
 }
 
 function renderThemeList() {
@@ -2137,6 +2323,7 @@ function toggleThemeList(force) {
 async function fetchData(query) {
   const daily = view.dailyOn ? '&daily=1' : '';
   const response = await fetch(`/api/data?${query}${daily}`);
+  if (response.status === 401) location.href = '/login';
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   return response.json();
 }
@@ -2176,7 +2363,7 @@ async function refresh(showBusy) {
     renderStatus();
     renderScreen(); // every time: the screen shows how long ago the measure was taken
   } catch {
-    document.getElementById('status').textContent = 'Dashboard injoignable : le programme est-il lancé ?';
+    document.getElementById('status').textContent = 'Serveur injoignable pour le moment';
   } finally {
     if (request === view.request) document.body.classList.remove('refreshing');
   }
@@ -2214,10 +2401,25 @@ document.getElementById('theme-open').addEventListener('click', (event) => {
 });
 document.addEventListener('click', (event) => {
   if (!event.target.closest('.theme-menu')) toggleThemeList(false);
+  if (!event.target.closest('.user-menu')) toggleUserList(false);
 });
 renderThemeList();
 renderClock();
 setInterval(renderClock, 15000);
+document.getElementById('user-open').addEventListener('click', (event) => {
+  event.stopPropagation();
+  toggleUserList();
+});
+document.getElementById('password-open').addEventListener('click', () => openPanel('password-panel'));
+document.getElementById('admin-open').addEventListener('click', () => { location.href = '/admin'; });
+document.getElementById('invite-open').addEventListener('click', () => openPanel('invite-panel'));
+document.getElementById('invite-panel').addEventListener('toggle', (event) => {
+  if (event.target.open) loadInvite();
+});
+document.getElementById('invite-renew').addEventListener('click', renewInvite);
+document.getElementById('logout').addEventListener('click', logout);
+document.getElementById('password-form').addEventListener('submit', changePassword);
+document.getElementById('invite-copy').addEventListener('click', copyInviteLink);
 document.getElementById('add-form').addEventListener('submit', addStation);
 document.getElementById('stats-panel').addEventListener('toggle', (event) => {
   if (event.target.open === view.statsOpen) return;

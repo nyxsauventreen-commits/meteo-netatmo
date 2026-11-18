@@ -214,6 +214,36 @@ class Stats(unittest.TestCase):
         )
 
 
+class RainCalendar(unittest.TestCase):
+    def setUp(self):
+        self.db = sqlite3.connect(":memory:")
+        self.db.execute("CREATE TABLE rain_days (station_id TEXT, day TEXT, rain REAL)")
+        start = datetime.date(2025, 1, 1)
+        self.db.executemany(
+            "INSERT INTO rain_days VALUES ('s', ?, ?)",
+            [((start + datetime.timedelta(days=n)).isoformat(), 1.0) for n in range(700)],
+        )
+
+    def test_month_season_and_year_so_far_with_last_year(self):
+        calendar = stats.rain_calendar(self.db, "s", datetime.date(2026, 11, 18))
+        self.assertEqual(calendar["month"], {"label": "en novembre", "since": "2026-11-01", "total": 18.0, "last_year": 18.0})
+        self.assertEqual((calendar["season"]["label"], calendar["season"]["since"]), ("de l'automne", "2026-09-01"))
+        self.assertEqual(calendar["season"]["total"], 30 + 31 + 18)
+        self.assertEqual(calendar["year"]["total"], 322.0)
+        self.assertEqual(calendar["year"]["last_year"], 322.0)
+
+    def test_winter_starts_in_december_of_the_year_before(self):
+        calendar = stats.rain_calendar(self.db, "s", datetime.date(2026, 2, 10))
+        self.assertEqual((calendar["season"]["label"], calendar["season"]["since"]), ("de l'hiver", "2025-12-01"))
+        self.assertIsNone(calendar["season"]["last_year"])  # the totals start in January 2025
+
+    def test_leap_day(self):
+        self.assertEqual(stats.one_year_earlier(datetime.date(2028, 2, 29)), datetime.date(2027, 2, 28))
+
+    def test_no_rain_gauge(self):
+        self.assertIsNone(stats.rain_calendar(self.db, "autre", datetime.date(2026, 11, 18)))
+
+
 class Hours(unittest.TestCase):
     ANSWER = {
         "current": {"weather_code": 2, "is_day": 1},

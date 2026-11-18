@@ -1,5 +1,6 @@
 # Météo · tableau de bord pour stations Netatmo
 
+[![Tests](https://github.com/nyxsauventreen-commits/meteo-netatmo/actions/workflows/tests.yml/badge.svg)](https://github.com/nyxsauventreen-commits/meteo-netatmo/actions/workflows/tests.yml)
 [English version](README.en.md)
 
 Un tableau de bord météo à héberger soi-même. Il suit des stations Netatmo **publiques**, les
@@ -35,20 +36,23 @@ aucun service tiers en dehors des sources météo citées plus bas.
 
 L'interface est en français.
 
-## Deux versions
+## Un programme, deux modes
 
-| | Version locale (dossier principal) | Version en ligne (`version-vps/`) |
+Le même programme (version 2.1) tourne sur un PC ou sur un serveur. Le mode se choisit au
+lancement.
+
+| | Mode local (par défaut) | Mode en ligne |
 |---|---|---|
 | Pour | un PC, une seule personne | un serveur, plusieurs personnes |
 | Accès | `http://localhost:8765` | votre domaine, en HTTPS |
-| Comptes | aucun | sur invitation, avec une page d'administration |
+| Comptes | aucun, mot de passe facultatif | sur invitation, avec une page d'administration |
 | Collecte | quand le PC est allumé | en continu |
-| Version | 1.5 | 2.0 |
+| Lancement | `python app.py` | `METEO_INVITE_CODE` défini, dans Docker |
 
-La version en ligne ajoute aussi une appli installable sur téléphone et sur PC. Elle ajoute
-une page d'administration : état du serveur, limites, message pour tous, options utilisées
-et sauvegarde de la base. Une station suivie par plusieurs personnes n'y est collectée
-qu'une fois.
+Les deux modes ont les mêmes écrans et peuvent s'installer comme une appli sur téléphone et
+sur PC. Le mode en ligne ajoute une page d'administration : état du serveur, limites, message
+pour tous, options utilisées et sauvegarde de la base. Une station suivie par plusieurs
+personnes n'y est collectée qu'une fois.
 
 ## Essayer sans compte
 
@@ -59,7 +63,7 @@ python app.py --demo
 Sous Windows, double-cliquez sur `lancer-demo.bat`. Les valeurs sont simulées, et la page
 l'indique clairement.
 
-## Installer la version locale
+## Installer sur un PC
 
 1. Installez [Python](https://www.python.org/) 3 (version testée : 3.13).
 2. Sur [dev.netatmo.com](https://dev.netatmo.com), créez une application dans « My Apps ».
@@ -77,10 +81,11 @@ coordonnées : le lien ne contient pas la position. Vous pouvez ajouter 8 statio
 
 La page **Guide**, dans l'application, détaille chaque fonction.
 
-## Installer la version en ligne
+## Installer sur un serveur
 
-Voir [version-vps/INSTALLER-VPS.md](version-vps/INSTALLER-VPS.md). Elle tourne dans Docker
-avec l'image Python officielle, et un tunnel Cloudflare fournit le HTTPS sans ouvrir de port.
+Voir [version-vps/INSTALLER-VPS.md](version-vps/INSTALLER-VPS.md). Le programme tourne dans
+Docker avec l'image Python officielle, et un tunnel Cloudflare fournit le HTTPS sans ouvrir de
+port. Le dossier `version-vps/` contient seulement les outils d'installation et de mise à jour.
 
 ## Données et vie privée
 

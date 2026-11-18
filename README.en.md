@@ -1,5 +1,6 @@
 # Météo · a dashboard for Netatmo weather stations
 
+[![Tests](https://github.com/nyxsauventreen-commits/meteo-netatmo/actions/workflows/tests.yml/badge.svg)](https://github.com/nyxsauventreen-commits/meteo-netatmo/actions/workflows/tests.yml)
 [Version française](README.md)
 
 A self-hosted weather dashboard. It follows **public** Netatmo stations, either your own or any
@@ -36,18 +37,21 @@ the weather sources listed below.
   (`/?ecran=<station>`).
 - Several colour **themes**, and a layout that works on phones.
 
-## Two versions
+## One program, two modes
 
-| | Local version (main folder) | Online version (`version-vps/`) |
+The same program (version 2.1) runs on a PC or on a server. You choose the mode when you start
+it.
+
+| | Local mode (default) | Online mode |
 |---|---|---|
 | For | one PC, one person | a server, several people |
 | Address | `http://localhost:8765` | your domain, over HTTPS |
-| Accounts | none | by invitation, with an admin page |
+| Accounts | none, optional password | by invitation, with an admin page |
 | Collection | while the PC is on | all the time |
-| Version | 1.5 | 2.0 |
+| Start | `python app.py` | `METEO_INVITE_CODE` set, in Docker |
 
-The online version adds an app that can be installed on phones and PCs. It also has an admin
-page:
+Both modes have the same screens, and both can be installed as an app on phones and PCs. The
+online mode adds an admin page:
 - server status;
 - limits;
 - a message for everyone;
@@ -65,7 +69,7 @@ python app.py --demo
 On Windows, double-click `lancer-demo.bat`. The values are simulated, and the page clearly says
 so.
 
-## Install the local version
+## Install on a PC
 
 1. Install [Python](https://www.python.org/) 3 (tested with 3.13).
 2. On [dev.netatmo.com](https://dev.netatmo.com), create an app under "My Apps". If a
@@ -85,10 +89,11 @@ You can add up to 8 stations.
 
 The **Guide** page inside the app explains every feature, in French.
 
-## Install the online version
+## Install on a server
 
-See [version-vps/INSTALLER-VPS.md](version-vps/INSTALLER-VPS.md) (in French). It runs in Docker
-with the official Python image. A Cloudflare tunnel provides HTTPS without opening any port.
+See [version-vps/INSTALLER-VPS.md](version-vps/INSTALLER-VPS.md) (in French). The program runs in
+Docker with the official Python image. A Cloudflare tunnel provides HTTPS without opening any
+port. The `version-vps/` folder only holds the install and update tools.
 
 ## Data and privacy
 

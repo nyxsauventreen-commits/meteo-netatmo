@@ -214,6 +214,13 @@ class SeveralUsers(ServerCase):
         restarted = app.Dashboard(self.config)
         self.assertEqual(restarted.user_stations(1)[0]["name"], "Ancienne")
 
+    def test_list_of_a_pc_database_is_not_collected_online(self):
+        with self.dashboard.connect() as db:
+            db.execute("INSERT INTO stations (id, lat, lon) VALUES (?, 43, 1)", (OTHER,))
+            db.execute("INSERT INTO user_stations (user_id, station_id, name, slot) VALUES (0, ?, 'PC', 0)", (OTHER,))
+        restarted = app.Dashboard(self.config)
+        self.assertNotIn(OTHER, [station["id"] for station in restarted.stations])
+
     def test_limit_per_user(self):
         user = self.user("Sam")
         for index in range(app.MAX_STATIONS - 1):

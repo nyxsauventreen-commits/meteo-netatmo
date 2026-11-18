@@ -13,6 +13,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 PROJECT = HERE.parent
+PROGRAM_FOLDER = HERE.parent  # one program for the PC and the VPS
 WORK = PROJECT / "vps-data"
 PORT = 8771
 CONNECT_TIMEOUT = 600
@@ -25,12 +26,27 @@ PROGRAM = [
 DATA_FILES = ["config.json", "meteo.db", "token.json"]
 
 
+def pc_stations(path):
+    """The stations of the PC's page (version 2.1 and later keep them in the database), in their order."""
+    db = sqlite3.connect(path)
+    db.row_factory = sqlite3.Row
+    try:
+        rows = db.execute(
+            "SELECT stations.id, stations.lat, stations.lon, stations.box, stations.place, "
+            "user_stations.name, user_stations.slot FROM user_stations "
+            "JOIN stations ON stations.id = user_stations.station_id "
+            "WHERE user_stations.user_id = 0 ORDER BY user_stations.position, user_stations.slot"
+        ).fetchall()
+    except sqlite3.OperationalError:  # a database from before 2.1: the stations are in config.json
+        return []
+    finally:
+        db.close()
+    return [{key: row[key] for key in row.keys() if row[key] is not None} for row in rows]
+
+
 def prepare_data(client_id, client_secret):
     """Copy the stations and measures, with the identifiers of the VPS application."""
     WORK.mkdir(exist_ok=True)
-    config = json.loads((PROJECT / "config.json").read_text(encoding="utf-8-sig"))
-    config.update(client_id=client_id, client_secret=client_secret)
-    (WORK / "config.json").write_text(json.dumps(config, indent=2, ensure_ascii=False), encoding="utf-8")
     source = sqlite3.connect(f"file:{PROJECT / 'data' / 'meteo.db'}?mode=ro", uri=True)
     target = sqlite3.connect(WORK / "meteo.db")
     try:
@@ -38,6 +54,11 @@ def prepare_data(client_id, client_secret):
     finally:
         source.close()
         target.close()
+    config = json.loads((PROJECT / "config.json").read_text(encoding="utf-8-sig"))
+    config.update(client_id=client_id, client_secret=client_secret)
+    # The first account created on the server receives these stations.
+    config["stations"] = pc_stations(WORK / "meteo.db") or config.get("stations", [])
+    (WORK / "config.json").write_text(json.dumps(config, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 def has_token():
@@ -73,7 +94,7 @@ def connect_netatmo():
 def upload_commands(target):
     return [
         ["ssh", "-t", target, f'sudo mkdir -p {REMOTE}/app {REMOTE}/data && sudo chown -R "$USER" {REMOTE}'],
-        ["scp", "-r", *(str(HERE / name) for name in PROGRAM), f"{target}:{REMOTE}/app/"],
+        ["scp", "-r", *(str(PROGRAM_FOLDER / name) for name in PROGRAM), f"{target}:{REMOTE}/app/"],
         ["scp", *(str(WORK / name) for name in DATA_FILES), f"{target}:{REMOTE}/data/"],
         ["ssh", "-t", target, f"sudo chown -R 1000:1000 {REMOTE}"],
     ]

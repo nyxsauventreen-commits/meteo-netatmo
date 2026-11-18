@@ -106,52 +106,70 @@ class DashboardCase(unittest.TestCase):
             ],
         }
         self.config_path.write_text(json.dumps(self.config), encoding="utf-8")
-        self.dashboard = app.Dashboard(self.config, False)
+        self.dashboard = app.Dashboard(self.config, local=True)
 
     def saved(self):
         return json.loads(self.config_path.read_text(encoding="utf-8"))
 
+    def mine(self):
+        return self.dashboard.user_stations(app.LOCAL_USER["id"])
+
+    def payload(self, *args, **kwargs):
+        return self.dashboard.payload(app.LOCAL_USER, *args, **kwargs)
+
     def add(self, link=LINK, name="Boulot", place="Valence"):
         with mock.patch.object(stations, "find_places", return_value=HOMONYMS):
-            return self.dashboard.add_station(link, name, place)
+            return self.dashboard.add_station(app.LOCAL_USER["id"], link, name, place)
 
 
 class EditStations(DashboardCase):
-    def test_add_is_saved_and_keeps_secrets(self):
+    def test_add_is_saved_and_config_is_left_alone(self):
+        before = self.config_path.read_text(encoding="utf-8")
         self.add()
-        saved = self.saved()
-        self.assertEqual(saved["client_secret"], SECRET)
-        self.assertEqual([s["name"] for s in saved["stations"]], ["Valence", "Boulot"])
-        self.assertEqual(saved["stations"][1]["id"], "70:ee:50:ab:cd:ef")
+        self.assertEqual([s["name"] for s in self.mine()], ["Valence", "Boulot"])
+        self.assertEqual(self.mine()[1]["id"], "70:ee:50:ab:cd:ef")
+        self.assertEqual(self.config_path.read_text(encoding="utf-8"), before)
+
+    def test_stations_of_version_1_are_imported_once_with_their_colours(self):
+        self.config["stations"] = [
+            {"id": "70:ee:50:00:00:01", "name": "Un", "lat": 43.4, "lon": 1.7, "slot": 3},
+            {"id": "70:ee:50:00:00:02", "name": "Deux", "lat": 43.5, "lon": 1.6, "slot": 3},
+        ]
+        self.config_path.write_text(json.dumps(self.config), encoding="utf-8")
+        for name in ("meteo.db", "meteo.db-wal", "meteo.db-shm"):
+            (app.DATA / name).unlink(missing_ok=True)
+        dashboard = app.Dashboard(self.config, local=True)
+        mine = dashboard.user_stations(app.LOCAL_USER["id"])
+        self.assertEqual([(s["name"], s["slot"]) for s in mine], [("Un", 3), ("Deux", 0)])
+        dashboard.remove_station(app.LOCAL_USER["id"], "70:ee:50:00:00:01")
+        restarted = app.Dashboard(self.config, local=True)  # a removed station does not come back
+        self.assertEqual([s["name"] for s in restarted.user_stations(app.LOCAL_USER["id"])], ["Deux"])
 
     def test_order_is_saved_and_keeps_the_colours(self):
         self.add()
-        colours = {s["id"]: s["slot"] for s in self.dashboard.stations}
-        reversed_ids = [s["id"] for s in reversed(self.dashboard.stations)]
-        self.dashboard.reorder_stations(reversed_ids)
-        self.assertEqual([s["id"] for s in self.saved()["stations"]], reversed_ids)
-        self.assertEqual({s["id"]: s["slot"] for s in self.dashboard.stations}, colours)
-        self.assertEqual(self.saved()["client_secret"], SECRET)
+        colours = {s["id"]: s["slot"] for s in self.mine()}
+        reversed_ids = [s["id"] for s in reversed(self.mine())]
+        self.dashboard.reorder_stations(app.LOCAL_USER["id"], reversed_ids)
+        self.assertEqual([s["id"] for s in self.mine()], reversed_ids)
+        self.assertEqual({s["id"]: s["slot"] for s in self.mine()}, colours)
 
     def test_order_needs_exactly_my_stations(self):
         self.add()
-        for ids in ([], ["70:ee:50:00:00:09", "x"], [self.dashboard.stations[0]["id"]]):
+        for ids in ([], ["70:ee:50:00:00:09", "x"], [self.mine()[0]["id"]]):
             with self.assertRaises(app.StationError):
-                self.dashboard.reorder_stations(ids)
+                self.dashboard.reorder_stations(app.LOCAL_USER["id"], ids)
 
     def test_config_saved_by_notepad_with_a_bom(self):
         self.config_path.write_text(json.dumps(self.config), encoding="utf-8-sig")
         self.assertEqual(app.load_config()["client_secret"], SECRET)
-        self.add()
-        self.assertEqual(len(self.saved()["stations"]), 2)
 
     def test_station_survives_a_restart(self):
         self.add()
-        restarted = app.Dashboard(self.saved(), False)
-        self.assertEqual(len(restarted.stations), 2)
+        restarted = app.Dashboard(self.saved(), local=True)
+        self.assertEqual(len(restarted.user_stations(app.LOCAL_USER["id"])), 2)
 
     def test_empty_placeholder_is_dropped(self):
-        self.assertEqual(len(self.dashboard.stations), 1)
+        self.assertEqual(len(self.mine()), 1)
 
     def test_name_defaults_to_place(self):
         self.assertEqual(self.add(name=" ")["name"], "Valence 82400")
@@ -182,7 +200,7 @@ class EditStations(DashboardCase):
             with self.assertRaisesRegex(app.StationError, "introuvable"):
                 self.add()
         self.assertEqual(fetch.call_count, app.MAX_SEARCH_AREAS)
-        self.assertEqual(len(self.saved()["stations"]), 2)  # file left as it was
+        self.assertEqual(len(self.mine()), 1)  # nothing added
 
     def test_station_in_a_neighbouring_area_is_found_at_its_real_position(self):
         self.dashboard.tokens.data = {"refresh_token": "r"}
@@ -190,8 +208,9 @@ class EditStations(DashboardCase):
         misses = [netatmo.StationNotFound("no")] * 4
         with mock.patch.object(netatmo, "fetch_station", side_effect=[*misses, reading]) as fetch, \
                 mock.patch.object(app.time, "sleep"):
-            station = self.add()
+            self.add()
         self.assertEqual(fetch.call_args[0][1]["id"], "70:ee:50:ab:cd:ef")
+        station = next(s for s in self.dashboard.stations if s["id"] == "70:ee:50:ab:cd:ef")
         self.assertEqual((station["lat"], station["lon"], station["box"]), (43.6, 1.9, netatmo.EXACT_BOX_DEG))
 
     def test_search_goes_from_the_places_outwards(self):
@@ -204,12 +223,40 @@ class EditStations(DashboardCase):
         self.assertAlmostEqual(first_ring, app.SEARCH_STEP)
 
     def test_colours_stay_with_their_station(self):
-        first = self.add()
-        second = self.add(link="70:ee:50:00:00:01", name="Trois")
-        self.dashboard.remove_station(first["id"])
-        kept = next(s for s in self.dashboard.stations if s["name"] == "Trois")
-        self.assertEqual(kept["slot"], second["slot"])
-        self.assertEqual(self.add(name="Retour")["slot"], first["slot"])
+        self.add()
+        self.add(link="70:ee:50:00:00:01", name="Trois")
+        slots = {s["name"]: s["slot"] for s in self.mine()}
+        self.dashboard.remove_station(app.LOCAL_USER["id"], "70:ee:50:ab:cd:ef")
+        self.assertEqual({s["name"]: s["slot"] for s in self.mine()}["Trois"], slots["Trois"])
+        self.add(name="Retour")
+        self.assertEqual({s["name"]: s["slot"] for s in self.mine()}["Retour"], slots["Boulot"])
+
+
+class Demo(unittest.TestCase):
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        patcher = mock.patch.object(app, "DATA", Path(folder.name))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.dashboard = app.Dashboard({}, demo=True)
+
+    def test_two_simulated_stations_with_their_history(self):
+        data = self.dashboard.payload(app.LOCAL_USER, 24 * 30)
+        self.assertTrue(data["demo"])
+        self.assertEqual(data["mode"], "local")
+        self.assertEqual([s["name"] for s in data["stations"]], ["Valence", "Boulot"])
+        self.assertTrue(all(s["series"]["ts"] and s["forecast"] and s["url"] is None for s in data["stations"]))
+        self.assertEqual(len(data["stations"][0]["alerts"]), 2)
+
+    def test_poll_calls_no_service(self):
+        with mock.patch("urllib.request.urlopen") as urlopen:
+            self.dashboard.poll()
+        urlopen.assert_not_called()
+
+    def test_stations_cannot_be_changed(self):
+        with self.assertRaisesRegex(app.StationError, "démonstration"):
+            self.dashboard.remove_station(app.LOCAL_USER["id"], "demo:1")
 
 
 class Password(unittest.TestCase):
@@ -233,18 +280,25 @@ class LocalAddress(DashboardCase):
 
     def setUp(self):
         super().setUp()
-        self.server = app.ThreadingHTTPServer(("127.0.0.1", 0), app.make_handler(self.dashboard, 8765))
+        self.start(app.make_handler(self.dashboard, port=8765))
+
+    def start(self, handler):
+        self.server = app.ThreadingHTTPServer(("127.0.0.1", 0), handler)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.addCleanup(self.server.server_close)
         self.addCleanup(self.server.shutdown)
 
-    def status(self, host):
+    def request(self, path, host="localhost:8765", method="GET", headers=None, body=None):
         connection = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=10)
         try:
-            connection.request("GET", "/api/data", headers={"Host": host})
-            return connection.getresponse().status
+            connection.request(method, path, body=body, headers={"Host": host, **(headers or {})})
+            response = connection.getresponse()
+            return response.status, response.getheader("Location"), response.read()
         finally:
             connection.close()
+
+    def status(self, host):
+        return self.request("/api/data", host)[0]
 
     def test_own_names_are_answered(self):
         for host in ("localhost:8765", "127.0.0.1:8765", "[::1]:8765", "LOCALHOST"):
@@ -253,6 +307,44 @@ class LocalAddress(DashboardCase):
     def test_other_names_are_refused(self):
         for host in ("evil.example:8765", "localhost.evil.example", "", "192.168.1.20:8765"):
             self.assertEqual(self.status(host), 403, host)
+
+    def test_no_account_and_no_administration(self):
+        status, location, _ = self.request("/login")
+        self.assertEqual((status, location), (302, "/"))
+        for path in ("/admin", "/admin.js", "/api/admin/overview", "/api/admin/backup", "/api/invite", "/entrer"):
+            self.assertEqual(self.request(path)[0], 404, path)
+        form = {"Content-Type": "application/json"}
+        for path in ("/api/login", "/api/register", "/api/password", "/api/portail/verifier"):
+            self.assertEqual(self.request(path, method="POST", headers=form, body=b"{}")[0], 404, path)
+
+    def test_page_data_and_choices_without_logging_in(self):
+        status, _, body = self.request("/api/data")
+        data = json.loads(body)
+        self.assertEqual((status, data["mode"], data["is_admin"]), (200, "local", False))
+        self.assertEqual([s["name"] for s in data["stations"]], ["Valence"])
+        settings = json.dumps({"settings": {"meteo-theme": "sombre"}}).encode()
+        headers = {"Content-Type": "application/json"}
+        self.assertEqual(self.request("/api/settings", method="PATCH", headers=headers, body=settings)[0], 200)
+        self.assertIn(b'"meteo-theme": "sombre"', self.request("/settings.js")[2])
+
+    def test_pages_are_marked_as_local(self):
+        self.assertIn(b'<html class="mode-local"', self.request("/")[2])
+        self.assertIn(b'<html class="mode-local"', self.request("/guide")[2])
+
+    def test_password_protects_everything(self):
+        self.start(app.make_handler(self.dashboard, password="secret", port=8765))
+        self.assertEqual(self.request("/api/data", host="192.168.1.20:8765")[0], 401)
+        good = {"Authorization": "Basic " + base64.b64encode(b"moi:secret").decode()}
+        self.assertEqual(self.request("/api/data", host="192.168.1.20:8765", headers=good)[0], 200)
+
+    def test_netatmo_connection_starts_from_the_page(self):
+        status, location, _ = self.request("/connecter")
+        self.assertEqual(status, 302)
+        self.assertTrue(location.startswith(f"{netatmo.API}/oauth2/authorize?"))
+        self.assertIn("redirect_uri=http%3A%2F%2Flocalhost%3A8765%2Fcallback", location)
+        status, location, _ = self.request("/callback?state=faux&code=x")
+        self.assertEqual((status, location), (302, "/"))
+        self.assertIn("state incorrect", self.dashboard.status["error"])
 
 
 class Window(DashboardCase):
@@ -271,7 +363,7 @@ class Window(DashboardCase):
 
     def test_window_limits_points_and_extremes(self):
         start, end = self.now - 10 * 86400, self.now - 9 * 86400
-        data = self.dashboard.payload(24, (start, end))
+        data = self.payload(24, (start, end))
         station = data["stations"][0]
         self.assertEqual((data["since"], data["until"]), (start, end))
         self.assertTrue(all(start <= ts <= end for ts in station["series"]["ts"]))
@@ -279,8 +371,8 @@ class Window(DashboardCase):
         self.assertEqual(station["temperature_max"], 10 * 86400)
 
     def test_zooming_in_shows_every_measure(self):
-        wide = self.dashboard.payload(0)
-        narrow = self.dashboard.payload(24, (self.now - 86400, self.now))
+        wide = self.payload(0)
+        narrow = self.payload(24, (self.now - 86400, self.now))
         self.assertGreater(wide["bucket"], 1)
         self.assertLessEqual(narrow["bucket"], 58)
         self.assertEqual(len(narrow["stations"][0]["series"]["ts"]), 145)
@@ -288,19 +380,19 @@ class Window(DashboardCase):
     def test_barometer_uses_the_last_three_hours(self):
         with self.dashboard.connect() as db:
             db.execute("UPDATE measures SET pressure = 1000 + ? - ts * 0.0002", (self.now * 0.0002,))
-        result = self.dashboard.payload(24)["stations"][0]["barometer"]
+        result = self.payload(24)["stations"][0]["barometer"]
         self.assertEqual(result["level"], "fall")
         self.assertAlmostEqual(result["change"], -2.2, delta=0.1)  # 0.0002 hPa per second over 3 hours
 
     def test_no_barometer_without_pressure(self):
-        self.assertIsNone(self.dashboard.payload(24)["stations"][0]["barometer"])
+        self.assertIsNone(self.payload(24)["stations"][0]["barometer"])
 
     def test_window_cannot_end_in_the_future(self):
-        data = self.dashboard.payload(24, (self.now - 3600, self.now + 86400))
+        data = self.payload(24, (self.now - 3600, self.now + 86400))
         self.assertLessEqual(data["until"], int(time.time()))
 
     def test_daily_mode_gives_one_point_per_calendar_day_with_extremes(self):
-        data = self.dashboard.payload(24, (self.now - 10 * 86400, self.now), daily=True)
+        data = self.payload(24, (self.now - 10 * 86400, self.now), daily=True)
         series = data["stations"][0]["series"]
         self.assertTrue(data["daily"])
         days = {datetime.date.fromtimestamp(ts) for ts in series["ts"]}
@@ -313,11 +405,11 @@ class Window(DashboardCase):
 
     def test_daily_points_stay_inside_the_period(self):
         start, end = self.now - 8 * 86400 - 3600, self.now - 3600
-        series = self.dashboard.payload(24, (start, end), daily=True)["stations"][0]["series"]
+        series = self.payload(24, (start, end), daily=True)["stations"][0]["series"]
         self.assertTrue(all(start <= ts <= end for ts in series["ts"]))
 
     def test_short_periods_stay_detailed(self):
-        data = self.dashboard.payload(24, (self.now - 3 * 86400, self.now), daily=True)
+        data = self.payload(24, (self.now - 3 * 86400, self.now), daily=True)
         self.assertFalse(data["daily"])
 
 
@@ -377,7 +469,7 @@ class EstimatedWind(DashboardCase):
 
     def test_estimates_stay_apart_from_measures(self):
         self.collect({}, {self.now - 3600: self.VALUES})
-        station = self.dashboard.payload(24)["stations"][0]
+        station = self.payload(24)["stations"][0]
         self.assertEqual(station["series"]["ts"], [])
         self.assertEqual(station["wind_estimate"]["wind_strength"], [7.2])
         self.assertEqual(station["wind_latest"]["gust_strength"], 13.0)
@@ -398,10 +490,10 @@ class AlertsAndNeighbours(DashboardCase):
 
     def test_warnings_reach_the_page(self):
         self.collect()
-        self.assertEqual(self.dashboard.payload(24)["stations"][0]["alerts"][0]["hazard"], "vent")
+        self.assertEqual(self.payload(24)["stations"][0]["alerts"][0]["hazard"], "vent")
 
     def test_no_warning_means_an_empty_list(self):
-        self.assertEqual(self.dashboard.payload(24)["stations"][0]["alerts"], [])
+        self.assertEqual(self.payload(24)["stations"][0]["alerts"], [])
 
     def test_department_is_looked_up_once(self):
         self.collect()
@@ -430,14 +522,14 @@ class AlertsAndNeighbours(DashboardCase):
         self.assertIsNone(self.dashboard.status["alerts_error"])
 
     def test_option_off_makes_no_netatmo_call(self):
-        self.dashboard.payload(24)
+        self.payload(24)
         with mock.patch.object(neighbours, "fetch_around") as fetch:
             self.dashboard.collect_neighbours()
         fetch.assert_not_called()
-        self.assertIsNone(self.dashboard.payload(24)["stations"][0]["neighbours"])
+        self.assertIsNone(self.payload(24)["stations"][0]["neighbours"])
 
     def test_option_on_asks_for_neighbours_then_gives_medians(self):
-        first = self.dashboard.payload(24, radius=5)["stations"][0]["neighbours"]
+        first = self.payload(24, radius=5)["stations"][0]["neighbours"]
         self.assertEqual(first, {"radius": 5, "pending": True})
         self.assertTrue(self.dashboard.wake.is_set())
         now = int(time.time())
@@ -448,14 +540,14 @@ class AlertsAndNeighbours(DashboardCase):
         ]
         with mock.patch.object(neighbours, "fetch_around", return_value=readings):
             self.dashboard.collect_neighbours()
-        summary = self.dashboard.payload(24, radius=5)["stations"][0]["neighbours"]
+        summary = self.payload(24, radius=5)["stations"][0]["neighbours"]
         self.assertEqual((summary["count"], summary["temperature"]), (5, 12))
 
     def test_failure_of_neighbours_does_not_touch_the_rest(self):
-        self.dashboard.payload(24, radius=5)
+        self.payload(24, radius=5)
         with mock.patch.object(neighbours, "fetch_around", side_effect=netatmo.ApiError(503, "down")):
             self.dashboard.collect_neighbours()
-        self.assertEqual(self.dashboard.payload(24, radius=5)["stations"][0]["neighbours"]["pending"], True)
+        self.assertEqual(self.payload(24, radius=5)["stations"][0]["neighbours"]["pending"], True)
 
 
 class Forecast(DashboardCase):
@@ -495,7 +587,7 @@ class Forecast(DashboardCase):
     def test_shown_in_the_page_data(self):
         with mock.patch.object(forecast, "fetch_forecast", return_value=self.READING):
             self.dashboard.collect_forecast()
-        self.assertEqual(self.dashboard.payload(24)["stations"][0]["forecast"]["code"], 2)
+        self.assertEqual(self.payload(24)["stations"][0]["forecast"]["code"], 2)
 
     def test_asked_once_an_hour(self):
         with mock.patch.object(forecast, "fetch_forecast", return_value=self.READING) as fetch:
@@ -524,17 +616,13 @@ class Rename(DashboardCase):
     STATION = "70:ee:50:12:34:56"
 
     def test_new_name_is_saved_and_keeps_the_rest(self):
-        self.dashboard.rename_station(self.STATION, "  Maison ")
-        saved = self.saved()
-        self.assertEqual(saved["stations"][0]["name"], "Maison")
-        self.assertEqual(saved["stations"][0]["id"], self.STATION)
-        self.assertEqual(saved["client_secret"], SECRET)
-        self.assertEqual(self.dashboard.stations[0]["name"], "Maison")
+        self.dashboard.rename_station(app.LOCAL_USER["id"], self.STATION, "  Maison ")
+        self.assertEqual([(s["id"], s["name"]) for s in self.mine()], [(self.STATION, "Maison")])
 
     def test_refused(self):
         for station_id, name in ((self.STATION, "   "), (self.STATION, "x" * 41), ("70:ee:50:00:00:09", "Maison")):
             with self.assertRaises(app.StationError):
-                self.dashboard.rename_station(station_id, name)
+                self.dashboard.rename_station(app.LOCAL_USER["id"], station_id, name)
 
 
 class Backfill(DashboardCase):
@@ -609,11 +697,13 @@ class Backfill(DashboardCase):
     def test_rain_totals_are_stored_and_returned(self):
         self.run_backfill()
         window = (int(datetime.datetime(2026, 10, 20).timestamp()), int(datetime.datetime(2026, 10, 30).timestamp()))
-        self.assertEqual(self.dashboard.payload(24, window)["stations"][0]["rain_days"], [["2026-10-25", 0.8]])
+        self.assertEqual(self.payload(24, window)["stations"][0]["rain_days"], [["2026-10-25", 0.8]])
+
+    SECOND = "70:ee:50:ff:00:02"  # collected after the first one, whose id comes first
 
     def two_stations(self):
-        other = {"id": "70:ee:50:00:00:02", "name": "Deux", "lat": 43.5, "lon": 1.5, "slot": 1}
-        self.dashboard.stations = [self.station, other]
+        other = {"id": self.SECOND, "name": "Deux", "lat": 43.5, "lon": 1.5}
+        self.dashboard.import_config_stations(app.LOCAL_USER["id"], [other])
 
     def poll_and_trace(self):
         calls = []
@@ -652,18 +742,16 @@ class Backfill(DashboardCase):
         first, _ = self.poll_and_trace()
         second, _ = self.poll_and_trace()
         ids = [{sid for kind, sid in calls if kind == "history"} for calls in (first, second)]
-        self.assertEqual(ids, [{self.station["id"]}, {"70:ee:50:00:00:02"}])
+        self.assertEqual(ids, [{self.station["id"]}, {self.SECOND}])
 
     def test_exact_position_is_saved_once(self):
         reading = {**dict.fromkeys(netatmo.FIELDS), "ts": 7000, "modules": self.MODULES, "location": [1.49, 43.53]}
         with mock.patch.object(netatmo, "fetch_station", return_value=reading):
             self.dashboard.collect_live(self.station)
-        saved = self.saved()["stations"][0]
+        saved = self.dashboard.stations[0]
         self.assertEqual((saved["lat"], saved["lon"], saved["box"]), (43.53, 1.49, netatmo.EXACT_BOX_DEG))
-        self.assertEqual(self.saved()["client_secret"], SECRET)
-        with mock.patch.object(self.dashboard, "save_stations") as save:
-            self.dashboard.refine_position(self.dashboard.stations[0], [9, 9])
-        save.assert_not_called()
+        self.dashboard.refine_position(saved, [9, 9])
+        self.assertEqual(self.dashboard.stations[0]["lat"], 43.53)
 
     def test_outage_is_retried_at_the_next_poll(self):
         reading = {**dict.fromkeys(netatmo.FIELDS), "ts": 7000, "modules": self.MODULES}

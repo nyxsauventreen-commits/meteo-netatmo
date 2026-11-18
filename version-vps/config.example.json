@@ -1,8 +1,0 @@
-{
-  "client_id": "",
-  "client_secret": "",
-  "poll_minutes": 10,
-  "history_days": 730,
-  "port": 8765,
-  "stations": []
-}

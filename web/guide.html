@@ -3,27 +3,29 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Guide de Météo perso</title>
-  <script src="/theme.js"></script>
-  <link rel="stylesheet" href="/style.css">
+  <title>Guide · Météo</title>
+  <script src="/settings.js"></script>
+  <script src="/theme.js?v=2"></script>
+  <link rel="stylesheet" href="/style.css?v=6">
 </head>
 <body>
   <main class="guide">
     <p><a href="/">← Retour au tableau de bord</a></p>
-    <h1>Guide de Météo perso</h1>
-    <p class="muted">Version 1.5</p>
+    <h1>Guide</h1>
+    <p class="muted">Version 2.1</p>
 
     <nav class="card guide-menu" aria-label="Sommaire">
       <a href="#station">Ajouter une station</a>
       <a href="#lire">Lire le tableau de bord</a>
       <a href="#courbes">Explorer les courbes</a>
+      <a href="#compte" class="online-only">Votre compte</a>
       <a href="#limites">Limites</a>
       <a href="#versions">Historique des versions</a>
     </nav>
 
     <section id="station" class="card">
       <h2>Ajouter une station</h2>
-      <p>Météo perso suit les stations Netatmo publiques. Vous n'avez pas besoin d'en posséder une.</p>
+      <p>Ce site suit les stations Netatmo publiques. Vous n'avez pas besoin d'en posséder une.</p>
       <ol>
         <li>Ouvrez la <a href="https://weathermap.netatmo.com/" target="_blank" rel="noopener noreferrer">carte Netatmo ↗</a> et zoomez sur votre secteur.</li>
         <li>Cliquez sur une station : ses mesures s'affichent sur le côté.</li>
@@ -47,23 +49,25 @@
       <h2>Lire le tableau de bord</h2>
       <dl>
         <dt>Carte de station</dt>
-        <dd>Les dernières mesures de la station : température, humidité, pression et pluie. <strong>Renommer</strong> change le nom, et <strong>Retirer</strong> l'enlève de votre liste. Les flèches ← et → changent l'ordre de vos stations. Un bandeau signale une station qui n'envoie plus de mesures.</dd>
+        <dd>Les dernières mesures de la station : température, humidité, pression et pluie. <strong>Renommer</strong> change le nom pour vous seul, et <strong>Retirer</strong> l'enlève de votre liste. Les flèches ← et → changent l'ordre de vos stations. Un bandeau signale une station qui n'envoie plus de mesures.</dd>
+        <dt>Icône du ciel</dt>
+        <dd>Le temps actuel selon un modèle météo. Elle peut différer de ce que vous voyez.</dd>
         <dt>Ligne météo des cartes</dt>
-        <dd>Le temps de maintenant puis la suite, selon un modèle météo. Elle suit les boutons de période : 24 h donne les prochaines heures, 3 j et 7 j ces nombres de jours, et les périodes plus longues 15 jours au maximum. Pour un jour, la carte donne le maximum puis le minimum. Faites défiler avec les flèches ‹ et ›, ou en glissant le doigt ou la souris.</dd>
+        <dd>En option, le temps de maintenant puis la suite, selon un modèle météo. Elle suit les boutons de période : 24 h donne les prochaines heures, 3 j et 7 j ces nombres de jours, et les périodes plus longues 15 jours au maximum. Pour un jour, la carte donne le maximum puis le minimum. Faites défiler avec les flèches ‹ et ›, ou en glissant le doigt ou la souris.</dd>
         <dt>Pastilles d'alerte</dt>
-        <dd>En haut à droite d'une carte, une pastille jaune, orange ou rouge signale une vigilance officielle sur le département. Survolez-la ou touchez-la pour le détail. Sans alerte, rien ne s'affiche. Pour une décision importante, consultez toujours les sources officielles.</dd>
+        <dd>En option, une pastille jaune, orange ou rouge, en haut à droite d'une carte, signale une vigilance officielle sur le département. Survolez-la ou touchez-la pour le détail. Sans alerte, rien ne s'affiche. Pour une décision importante, consultez toujours les sources officielles.</dd>
         <dt>Baromètre</dt>
         <dd>Une tendance pour les 6 à 12 prochaines heures, calculée avec la pression de la station sur 3 heures. Une baisse annonce plutôt une dégradation, une hausse une amélioration. Elle rate souvent les orages d'été.</dd>
         <dt>Vent estimé</dt>
         <dd>Si une station n'a pas d'anémomètre, le vent et les rafales viennent d'un modèle météo. Ce ne sont pas des mesures.</dd>
         <dt>Prévisions</dt>
-        <dd>Un panneau fermé au départ, à ouvrir d'un clic. Il s'ouvre tout seul quand une seule station est affichée. Il suit lui aussi les boutons de période. Ses propres boutons <strong>24 h</strong>, <strong>3 j</strong>, <strong>7 j</strong> et <strong>15 j</strong> changent seulement ce panneau, jusqu'au prochain choix de période. Au-delà de 7 jours, ce sont des tendances, bien moins fiables.</dd>
+        <dd>Un panneau fermé au départ, à ouvrir d'un clic. Il s'ouvre tout seul quand une seule station est affichée. Il suit les boutons de période. Ses propres boutons <strong>24 h</strong>, <strong>3 j</strong>, <strong>7 j</strong> et <strong>15 j</strong> changent seulement ce panneau, jusqu'au prochain choix de période. Au-delà de 7 jours, ce sont des tendances, bien moins fiables.</dd>
         <dt>Choisir ce qui s'affiche</dt>
-        <dd>Dans <strong>Dates, courbes et options</strong>, chaque bouton affiche ou masque un élément : <strong>Météo sur les cartes</strong>, <strong>Prévisions</strong>, <strong>Alertes météo</strong>, <strong>Baromètre</strong>, <strong>Stats</strong>, <strong>Soleil et lune</strong> et <strong>Stations voisines</strong>. Au départ, seuls le baromètre, le soleil et la lune, et le panneau Prévisions, fermé, sont actifs. Sans la ligne météo, la carte garde l'icône du ciel actuel. Vos choix sont retenus.</dd>
+        <dd>Dans <strong>Dates, courbes et options</strong>, chaque bouton affiche ou masque un élément : <strong>Météo sur les cartes</strong>, <strong>Prévisions</strong>, <strong>Alertes météo</strong>, <strong>Baromètre</strong>, <strong>Stats</strong>, <strong>Soleil et lune</strong> et <strong>Stations voisines</strong>. Au départ, seuls le baromètre, le soleil et la lune, et le panneau Prévisions, fermé, sont actifs.</dd>
         <dt>Stats</dt>
-        <dd>Un panneau en option, sous les graphiques. Il donne les chiffres de la période choisie, les records de la station, et l'écart avec les voisines si l'option Stations voisines est active. Tout est calculé à partir des mesures déjà enregistrées.</dd>
+        <dd>Un panneau en option, sous les graphiques. Il donne les chiffres de la période choisie, les cumuls de pluie du mois, de la saison et de l'année comparés à l'an dernier à la même date, les records de la station, et l'écart avec les voisines si l'option Stations voisines est active. Tout est calculé à partir des mesures déjà enregistrées.</dd>
         <dt>Stations voisines</dt>
-        <dd>Une option à activer dans <strong>Dates, courbes et options</strong>, avec un rayon de 1 à 10 km. La carte ajoute alors la médiane des stations publiques voisines, sans changer les mesures de votre station. La médiane est la valeur du milieu : elle écarte les stations mal réglées.</dd>
+        <dd>Une option avec un rayon de 1 à 10 km. La carte ajoute la médiane des stations publiques voisines, sans changer les mesures de votre station. La médiane est la valeur du milieu : elle écarte les stations mal réglées. Il faut au moins 5 voisines.</dd>
         <dt>Soleil et lune</dt>
         <dd>Sous la date : le lever et le coucher du soleil à vos stations, la durée du jour, puis la phase de la lune avec son dessin et la date de la prochaine pleine ou nouvelle lune. Sur téléphone, seuls les horaires et la phase restent. La lune est calculée, à une demi-journée près.</dd>
         <dt>Plein écran</dt>
@@ -72,7 +76,7 @@
         <dd>Ils affichent toutes vos stations, ou une seule avec ses cartes, ses courbes et son tableau. Les noms longs y sont raccourcis à leur premier mot, et le nom complet reste sur la carte.</dd>
       </dl>
       <p>Le bouton ◐ en haut à droite choisit le mode clair ou sombre. En automatique, la page suit le réglage de votre appareil.</p>
-      <p>Les mesures sont mises à jour environ toutes les 10 minutes, tant que le programme est lancé. Les périodes où le PC était éteint se remplissent au redémarrage.</p>
+      <p>Les mesures sont mises à jour environ toutes les 10 minutes<span class="local-only">, tant que le programme est lancé. Les périodes où le PC était éteint se remplissent au redémarrage</span>.</p>
     </section>
 
     <section id="courbes" class="card">
@@ -91,10 +95,22 @@
       </ul>
     </section>
 
+    <section id="compte" class="card online-only">
+      <h2>Votre compte</h2>
+      <ul>
+        <li>Votre liste de stations n'appartient qu'à vous : les autres utilisateurs ne la voient pas.</li>
+        <li>Vos réglages d'affichage sont gardés dans votre compte : vous les retrouvez sur tous vos appareils.</li>
+        <li>Cliquez sur votre nom, en haut à droite, pour ouvrir ce guide, changer votre mot de passe ou vous déconnecter.</li>
+        <li><strong>Inviter quelqu'un</strong>, dans ce même menu, donne votre code et le lien à copier. Un code ne sert qu'une fois : un nouveau le remplace dès qu'une personne s'inscrit avec.</li>
+        <li>En cas d'oubli, demandez un mot de passe temporaire à l'administrateur, puis changez-le.</li>
+        <li>Changer votre mot de passe déconnecte vos autres appareils : reconnectez-vous sur chacun avec le nouveau.</li>
+      </ul>
+    </section>
+
     <section id="limites" class="card">
       <h2>Limites</h2>
       <ul>
-        <li>8 stations au maximum.</li>
+        <li>8 stations au maximum<span class="online-only"> par personne</span>.</li>
         <li>Seules les stations publiques Netatmo sont disponibles.</li>
         <li>L'historique remonte à deux ans au plus, selon la station.</li>
       </ul>
@@ -102,27 +118,55 @@
 
     <section id="versions" class="card">
       <h2>Historique des versions</h2>
-      <h3>1.5, 17 novembre 2026</h3>
+      <h3>2.1, 18 novembre 2026</h3>
       <ul>
+        <li>Un seul programme pour le PC et le site : la version du PC a maintenant tout ce que le site propose, sans compte.</li>
+        <li>Cumuls de pluie du mois, de la saison et de l'année dans le panneau Stats.</li>
+      </ul>
+      <h3>2.0, 17 novembre 2026</h3>
+      <ul>
+        <li>Titre « Météo » avec l'icône de l'appli, et ce guide dans le menu à votre nom.</li>
         <li>Soleil et lune sous la date.</li>
         <li>Plein écran d'une station, pour un téléphone, une tablette ou un écran dédié.</li>
         <li>Graphiques plus simples au doigt.</li>
       </ul>
-      <h3>1.4, 6 novembre 2026</h3>
+      <h3>1.8, 10 novembre 2026</h3>
       <ul>
-        <li>Ligne météo sur chaque carte, liée aux boutons de période.</li>
+        <li>Panneau Stats : chiffres de la période, records et comparaison aux voisines.</li>
+        <li>Panneau Prévisions fermé au départ, ouvert seul pour une station.</li>
+        <li>Un code d'invitation par personne, valable une seule fois.</li>
+        <li>Nombre de personnes en ligne.</li>
+      </ul>
+      <h3>1.7, 6 novembre 2026</h3>
+      <ul>
+        <li>Ligne météo sur les cartes, liée aux boutons de période.</li>
         <li>Panneau Prévisions jusqu'à 15 jours, avec ses propres boutons.</li>
         <li>Pastilles d'alertes météo officielles.</li>
-        <li>Médiane des stations voisines et panneau Stats, en option.</li>
+        <li>Médiane des stations voisines.</li>
+        <li>Chaque élément s'affiche au choix, et les réglages restent dans le compte.</li>
         <li>Date et heure en haut de page, et choix du mode clair ou sombre.</li>
+        <li>Menu à votre nom pour le mot de passe.</li>
       </ul>
-      <h3>1.3, 6 novembre 2026</h3>
+      <h3>1.6, 6 novembre 2026</h3>
       <ul>
-        <li>Ce guide.</li>
         <li>Bouton d'ajout de station en haut de page.</li>
         <li>Ordre des stations au choix.</li>
         <li>Noms longs raccourcis et onglets sur une ligne sur mobile.</li>
         <li>Bandeau d'alerte pour une station qui n'envoie plus de mesures.</li>
+      </ul>
+      <h3>1.5, 6 novembre 2026</h3>
+      <ul>
+        <li>Ce guide et l'historique des versions.</li>
+      </ul>
+      <h3>1.4, 6 novembre 2026</h3>
+      <ul>
+        <li>Changement de mot de passe.</li>
+      </ul>
+      <h3>1.3, 6 novembre 2026</h3>
+      <ul>
+        <li>Version en ligne, en HTTPS.</li>
+        <li>Comptes utilisateurs avec code d'invitation.</li>
+        <li>Une liste de stations par personne.</li>
       </ul>
       <h3>1.2, 5 novembre 2026</h3>
       <ul>

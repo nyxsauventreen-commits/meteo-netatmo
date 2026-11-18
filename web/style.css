@@ -93,6 +93,44 @@
   --error-bg: #3d1c1c;
   --wx-cloud: #8f8e86;
 }
+/* Thème « Ciel » (au choix, jamais par défaut) : l'ambiance de la page de connexion, sans animation */
+:root[data-theme="ciel"] {
+  color-scheme: dark;
+  --page: #0e1630;
+  --surface: rgba(20, 31, 62, 0.86);
+  --ink: #eef3ff;
+  --ink-2: #c5d0ee;
+  --muted: #9aa7cc;
+  --grid: rgba(255, 255, 255, 0.08);
+  --axis: rgba(255, 255, 255, 0.2);
+  --border: rgba(255, 255, 255, 0.13);
+  --hover: rgba(255, 255, 255, 0.08);
+  --series-1: #5aa6ff;
+  --series-2: #ff8f4f;
+  --series-3: #3fd6a0;
+  --series-4: #ffcc4d;
+  --series-5: #ff7eb3;
+  --series-6: #4cc35a;
+  --series-7: #a99bff;
+  --series-8: #ff6b6b;
+  --warn-bg: #3a2e12;
+  --error-bg: #3d1c1c;
+  --wx-cloud: #9aa6c4;
+}
+:root[data-theme="ciel"] body {
+  background:
+    radial-gradient(circle at 86% 9%, rgba(220, 230, 255, 0.22) 0, rgba(220, 230, 255, 0) 16vmax),
+    radial-gradient(1.2px 1.2px at 12% 18%, #fff 50%, transparent 51%),
+    radial-gradient(1px 1px at 27% 8%, #fff 50%, transparent 51%),
+    radial-gradient(1.4px 1.4px at 43% 22%, #fff 50%, transparent 51%),
+    radial-gradient(1px 1px at 58% 12%, #fff 50%, transparent 51%),
+    radial-gradient(1.2px 1.2px at 71% 26%, #fff 50%, transparent 51%),
+    radial-gradient(1px 1px at 92% 34%, #fff 50%, transparent 51%),
+    radial-gradient(1px 1px at 6% 40%, #fff 50%, transparent 51%),
+    radial-gradient(1.3px 1.3px at 35% 36%, #fff 50%, transparent 51%),
+    linear-gradient(180deg, #0a1028 0%, #17224a 40%, #2e3468 72%, #5b4a7e 100%);
+  background-attachment: fixed;
+}
 
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }
@@ -123,8 +161,11 @@ a { color: inherit; }
 .moon { width: 17px; height: 17px; flex: none; }
 .moon-dark { fill: var(--hover); stroke: var(--muted); stroke-width: 1; }
 .moon-lit { fill: #e6d38f; }
-@media (max-width: 600px) { .sky-detail { display: none; } }
-.theme-menu { position: relative; }
+@media (max-width: 600px) {
+  .sky-detail { display: none; }
+  .top .sky-line { grid-column: 1 / -1; font-size: 12.5px; }
+}
+.theme-menu, .user-menu { position: relative; }
 #theme-open {
   padding: 2px 7px;
   border: 1px solid var(--border);
@@ -144,7 +185,7 @@ a { color: inherit; }
   padding: 6px;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
 }
-.theme-list[hidden] { display: none; }
+.theme-list[hidden], .theme-list button[hidden] { display: none; }
 .theme-list button {
   display: flex;
   gap: 9px;
@@ -160,7 +201,20 @@ a { color: inherit; }
   text-align: left;
   cursor: pointer;
 }
-.theme-list button:hover { background: var(--hover); }
+.account .theme-list a {
+  display: flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 4px 8px;
+  border-radius: 7px;
+  color: var(--ink);
+  font-size: 14px;
+  text-decoration: none;
+}
+.theme-list button:hover, .account .theme-list a:hover { background: var(--hover); }
+.brand { display: inline-flex; gap: 9px; align-items: center; }
+.brand img, .brand-icon { flex: none; width: 30px; height: 30px; border-radius: 7px; }
+.lbl-short { display: none; }
 .theme-list button[aria-pressed="true"] { font-weight: 650; }
 .theme-list i { flex: none; width: 18px; height: 18px; border: 1px solid var(--axis); border-radius: 50%; }
 
@@ -280,6 +334,198 @@ a { color: inherit; }
   font-weight: 600;
 }
 .station-tools .move { min-width: 28px; }
+#password-panel:not([open]), #admin-panel:not([open]), #invite-panel:not([open]) { display: none; }
+.online { display: inline-flex; gap: 5px; align-items: center; color: var(--ink-2); font-size: 13px; }
+.online[hidden] { display: none; }
+#admin-users td:last-child { white-space: nowrap; }
+.admin-page { display: grid; gap: 14px; }
+.admin-page > * { min-width: 0; }
+.admin-section h2 { margin-bottom: 10px; font-size: 17px; }
+.admin-form { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: end; }
+.admin-form label { display: grid; gap: 4px; color: var(--ink-2); font-size: 13.5px; }
+.admin-form label.wide { flex: 1 1 100%; }
+.admin-form input, .admin-form textarea {
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid var(--axis);
+  border-radius: 8px;
+  background: var(--page);
+  color: var(--ink);
+  font: inherit;
+}
+.admin-form input[type="number"] { width: 110px; }
+.admin-form textarea { width: 100%; resize: vertical; }
+.admin-page label.check { display: inline-flex; gap: 8px; align-items: center; color: var(--ink-2); font-size: 13.5px; }
+.admin-page label.check input { width: auto; min-height: 0; margin: 0; }
+.admin-form button {
+  min-height: 36px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--ink);
+  color: var(--surface);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.admin-help { margin-top: 10px; }
+#admin-stations td, #admin-log td { white-space: normal; }
+#admin-log tr.log-ok td { color: var(--muted); }
+.admin-header { display: flex; flex-wrap: wrap; gap: 4px 16px; align-items: baseline; justify-content: space-between; }
+.admin-header a { color: var(--ink-2); font-size: 14px; }
+.admin-group { display: grid; gap: 14px; }
+.admin-group[hidden], .table-scroll[hidden] { display: none; }
+.admin-section { display: grid; gap: 10px; align-content: start; padding: 16px 18px; }
+@media (max-width: 600px) { .admin-section { padding: 14px; } }
+.admin-section h2 { margin: 0; font-size: 17px; font-weight: 650; }
+.admin-lead { max-width: 75ch; color: var(--ink-2); font-size: 13.5px; }
+.admin-toast { margin: 0; padding: 8px 12px; border-radius: 9px; background: var(--hover); font-size: 14px; }
+.admin-toast:empty { display: none; }
+.user-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; }
+.user-card { display: grid; gap: 6px; align-content: start; padding: 12px 14px; border-radius: 10px; background: var(--hover); }
+.user-head { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+.user-head strong { font-size: 15px; }
+.role { padding: 1px 8px; border: 1px solid var(--axis); border-radius: 999px; color: var(--ink-2); font-size: 12px; }
+.user-online { display: inline-flex; gap: 5px; align-items: center; color: var(--ink-2); font-size: 12.5px; }
+.user-online::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: #2fa35a; }
+.user-meta { color: var(--ink-2); font-size: 13px; overflow-wrap: anywhere; }
+.user-seen { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.usage { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px 28px; }
+.usage-group { display: grid; gap: 7px; align-content: start; }
+.usage-group h3 { margin: 0 0 2px; color: var(--ink-2); font-size: 13.5px; font-weight: 600; }
+.usage-row { display: grid; grid-template-columns: minmax(0, 11em) minmax(40px, 1fr) auto; gap: 10px; align-items: center; font-size: 13.5px; }
+.usage-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.usage-bar { height: 8px; border-radius: 4px; background: var(--hover); overflow: hidden; }
+.usage-bar i { display: block; height: 100%; border-radius: 4px; background: var(--series-1); }
+.usage-row b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.user-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.station-place { display: block; color: var(--muted); font-size: 12px; }
+#admin-stations td:first-child { min-width: 160px; }
+@media (max-width: 600px) { .admin-nav .tabs { flex-wrap: wrap; overflow: visible; } }
+.admin-settings { display: grid; gap: 12px; justify-items: start; }
+.admin-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; width: 100%; }
+.admin-field { display: grid; gap: 5px; align-content: start; padding: 10px 12px; border-radius: 9px; background: var(--hover); color: var(--ink); font-size: 14px; font-weight: 600; }
+.admin-field small { color: var(--muted); font-size: 12.5px; font-weight: 400; }
+.admin-field label.check { font-weight: 400; }
+.admin-settings input[type="number"], .admin-settings textarea {
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid var(--axis);
+  border-radius: 8px;
+  background: var(--page);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 400;
+}
+.admin-settings input[type="number"] { width: 110px; }
+.admin-settings textarea { width: 100%; resize: vertical; }
+.admin-estimate { color: var(--ink-2); font-size: 13.5px; }
+.admin-estimate:empty { display: none; }
+.admin-inline { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; color: var(--ink-2); font-size: 14px; }
+.admin-inline select {
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid var(--axis);
+  border-radius: 8px;
+  background: var(--page);
+  color: var(--ink);
+  font: inherit;
+}
+.admin-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.admin-settings button.secondary { border: 1px solid var(--axis); background: transparent; color: var(--ink); }
+.admin-settings button[hidden] { display: none; }
+.admin-settings button {
+  min-height: 36px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--ink);
+  color: var(--surface);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.admin-section[hidden] { display: none; }
+#admin-abandoned button, .backup-link {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13.5px;
+  text-decoration: none;
+  cursor: pointer;
+}
+.backup-link { display: inline-block; justify-self: start; padding: 7px 14px; font-weight: 600; }
+#admin-users td.left:nth-last-child(2) { min-width: 240px; }
+#admin-panel .invite label { display: inline-flex; gap: 8px; align-items: center; }
+#admin-panel #invites-open { width: auto; min-height: 0; margin: 0; }
+.online::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: #2fa35a; }
+#user-open, .login-switch {
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.invite-copy {
+  margin-left: 8px;
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.invite { margin: 10px 0 4px; font-size: 14px; }
+.invite code, .admin-password { font-size: 14px; font-weight: 650; user-select: all; }
+#admin-users td { white-space: normal; }
+#admin-users td.left { min-width: 110px; }
+#admin-users button {
+  margin: 2px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+#admin-users button:hover { background: var(--hover); color: var(--ink); }
+.login-page { display: grid; gap: 16px; justify-items: center; max-width: 400px; padding-top: 12vh; }
+.login-card { display: grid; gap: 12px; width: 100%; padding: 20px; }
+.login-card h2 { font-size: 17px; }
+.login-card label { display: grid; gap: 4px; color: var(--ink-2); font-size: 13.5px; }
+.login-card label[hidden] { display: none; }
+.login-card input {
+  width: 100%;
+  min-height: 40px;
+  padding: 6px 10px;
+  border: 1px solid var(--axis);
+  border-radius: 8px;
+  background: var(--page);
+  color: var(--ink);
+  font: inherit;
+}
+#login-submit {
+  min-height: 42px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--ink);
+  color: var(--surface);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+#login-submit:disabled { opacity: 0.6; cursor: progress; }
+.login-message { min-height: 20px; color: var(--ink-2); font-size: 13.5px; }
 .toolbar {
   position: sticky;
   top: 8px;
@@ -626,6 +872,37 @@ th.left, td.left { text-align: left; }
   .expand, .station-foot button, .pin-bar button { min-height: 36px; }
 }
 
+/* ---------- Téléphone : un en-tête sur une ligne, des réglages compacts ---------- */
+@media (max-width: 600px) {
+  main { padding: 12px 12px 28px; }
+  .top { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 10px; align-items: center; margin-bottom: 10px; }
+  .top h1 { font-size: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .top .account { grid-column: 2; grid-row: 1; flex-wrap: nowrap; gap: 6px; margin-left: 0; }
+  .top .clock, .top #status { grid-column: 1 / -1; font-size: 12.5px; line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .top .clock { margin-top: 3px; }
+  .lbl-long { display: none; }
+  .lbl-short { display: inline; font-size: 13.5px; }
+  .brand img, .brand-icon { width: 34px; height: 34px; border-radius: 8px; }
+  /* The icon alone says "Météo" on a phone, which leaves room for the buttons. */
+  .brand-name { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .account .add-open { min-width: 32px; height: 32px; padding: 0 10px; font-size: 16px; line-height: 1; border-radius: 9px; }
+  .account a { font-size: 13px; }
+  #theme-open, #user-open { height: 32px; border-radius: 9px; }
+  #user-open { max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .online { font-size: 12.5px; }
+}@media (max-width: 600px) {
+  /* Toutes les périodes visibles comme sur PC, sur toute la largeur ; la navigation dans le temps passe dessous */
+  .toolbar-row { flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+  #periods { flex: 1 1 100%; min-width: 0; flex-wrap: nowrap; gap: 3px; }
+  #periods button { flex: 1 1 0; min-width: 0; justify-content: center; padding: 4px 0; font-size: 13.5px; white-space: nowrap; }
+  #pan-left, #pan-right { padding: 4px 8px; }
+  #zoom-out { padding: 4px 8px; font-size: 0; }
+  #zoom-out::before { content: '⤢'; font-size: 16px; }
+  .toolbar-row .segmented { flex-wrap: nowrap; }
+}@media (max-width: 600px) {
+  .toolbar { grid-template-columns: minmax(0, 1fr); }   /* la barre ne dépasse plus de l'écran */
+  .toolbar > *, .card { min-width: 0; }
+}
 /* ---------- A station over the whole screen ---------- */
 .station-head .screen-open {
   margin-left: auto;
@@ -701,3 +978,7 @@ body.screen-shown { overflow: hidden; }
   .screen-head, .screen-hours, .screen-foot { grid-column: 1 / -1; }
   .screen-now { grid-row: span 3; align-self: center; }
 }
+
+/* One program, two modes: the server marks the pages of the local mode (no account). */
+.mode-local .online-only { display: none !important; }
+html:not(.mode-local) .local-only { display: none !important; }

@@ -35,6 +35,24 @@ class Preparer(unittest.TestCase):
         self.assertEqual((config["client_id"], config["client_secret"]), ("vps", "vps-secret"))
         self.assertEqual(config["stations"], [{"id": "s"}])
 
+    def test_stations_of_the_pc_page_go_to_the_server(self):
+        db = sqlite3.connect(self.project / "data" / "meteo.db")
+        db.execute("CREATE TABLE stations (id TEXT, lat REAL, lon REAL, box REAL, place TEXT)")
+        db.execute("CREATE TABLE user_stations (user_id INT, station_id TEXT, name TEXT, slot INT, position INT)")
+        db.executemany("INSERT INTO stations VALUES (?, ?, ?, ?, ?)", [("a", 1.0, 2.0, None, "A"), ("b", 3.0, 4.0, 0.05, "B")])
+        db.executemany(
+            "INSERT INTO user_stations VALUES (?, ?, ?, ?, ?)",
+            [(0, "a", "Maison", 2, 1), (0, "b", "Boulot", 0, 0), (5, "a", "Autre", 1, 0)],
+        )
+        db.commit()
+        db.close()
+        preparer_vps.prepare_data("vps", "vps-secret")
+        config = json.loads((preparer_vps.WORK / "config.json").read_text(encoding="utf-8"))
+        self.assertEqual(config["stations"], [
+            {"id": "b", "lat": 3.0, "lon": 4.0, "box": 0.05, "place": "B", "name": "Boulot", "slot": 0},
+            {"id": "a", "lat": 1.0, "lon": 2.0, "place": "A", "name": "Maison", "slot": 2},
+        ])
+
     def test_pc_config_is_left_alone(self):
         before = (self.project / "config.json").read_bytes()
         preparer_vps.prepare_data("vps", "vps-secret")
@@ -54,7 +72,7 @@ class Preparer(unittest.TestCase):
 
     def test_every_program_file_exists(self):
         for name in preparer_vps.PROGRAM:
-            self.assertTrue((preparer_vps.HERE / name).exists(), name)
+            self.assertTrue((preparer_vps.PROGRAM_FOLDER / name).exists(), name)
 
     def test_upload_order_ends_by_giving_files_to_the_container(self):
         commands = preparer_vps.upload_commands("me@vps")

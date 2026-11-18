@@ -1,15 +1,24 @@
-"""Local weather dashboard: collects Netatmo readings and serves the charts."""
+"""Weather dashboard: collects Netatmo readings and serves the charts.
+
+Two modes, one program:
+- local (default, on a PC): one person, no account, optional password;
+- online (METEO_INVITE_CODE set, on a server): accounts, invitations and administration.
+"""
 import argparse
 import base64
 import bisect
+import collections
 import contextlib
 import datetime
+import http.cookies
 import json
 import math
 import os
+import re
 import secrets
 import shutil
 import sqlite3
+import tempfile
 import threading
 import time
 import urllib.parse
@@ -17,6 +26,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import accounts as account_tools
 import alerts
 import barometer
 import forecast
@@ -32,18 +42,74 @@ DATA = Path(os.environ.get("METEO_DATA") or ROOT / "data")
 WEB = ROOT / "web"
 CONFIG = DATA / "config.json" if os.environ.get("METEO_DATA") else ROOT / "config.json"
 LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
-AUTH_DELAY = 1  # seconds lost on a wrong password, to slow down guessing
-STATIC = {
-    "/": ("index.html", "text/html; charset=utf-8"),
-    "/guide": ("guide.html", "text/html; charset=utf-8"),
-    "/app.js": ("app.js", "text/javascript; charset=utf-8"),
-    "/theme.js": ("theme.js", "text/javascript; charset=utf-8"),
+# The local mode has a single person and no account table entry: the stations and choices belong to id 0.
+LOCAL_USER = {"id": 0, "name": "Moi"}
+# Paths that only make sense with accounts: the local mode does not answer them.
+ONLINE_ONLY = (
+    "/login.js", "/admin", "/admin.js", "/entrer", "/api/login", "/api/register", "/api/logout",
+    "/api/password", "/api/invite", "/api/admin/", "/api/portail/",
+)
+AUTH_DELAY = 1  # seconds lost on a refused login, password or invitation code
+COOKIE = "meteo_session"
+HTML = "text/html; charset=utf-8"
+JAVASCRIPT = "text/javascript; charset=utf-8"
+PUBLIC_FILES = {
+    "/login": ("login.html", HTML),
+    "/login.js": ("login.js", JAVASCRIPT),
+    "/theme.js": ("theme.js", JAVASCRIPT),
     "/style.css": ("style.css", "text/css; charset=utf-8"),
+    # Installation comme application (téléphone, PC)
+    "/manifest.json": ("manifest.json", "application/manifest+json"),
+    "/sw.js": ("sw.js", JAVASCRIPT),
+    "/appli.js": ("appli.js", JAVASCRIPT),
+    "/ciel.js": ("ciel.js", JAVASCRIPT),
+    "/icone-192.png": ("icone-192.png", "image/png"),
+    "/icone-512.png": ("icone-512.png", "image/png"),
+    "/favicon.ico": ("icone-192.png", "image/png"),
+}
+# Connexion depuis un portail externe (facultatif : seulement si portail.key existe) : le portail vérifie le mot de passe par le réseau Docker
+# interne avec une clé secrète, reçoit un code à usage unique, et le navigateur l'échange sur /entrer.
+PORTAL_KEY_FILE = DATA / "portail.key"
+PORTAL_CODE_SECONDS = 60
+portal_codes = {}
+portal_lock = threading.Lock()
+
+
+def portal_key():
+    try:
+        return PORTAL_KEY_FILE.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def new_portal_code(user_id):
+    code = secrets.token_urlsafe(24)
+    now = time.time()
+    with portal_lock:
+        for old in [k for k, (_, until) in portal_codes.items() if until < now]:
+            del portal_codes[old]
+        portal_codes[code] = (user_id, now + PORTAL_CODE_SECONDS)
+    return code
+
+
+def take_portal_code(code):
+    with portal_lock:
+        user_id, until = portal_codes.pop(code, (None, 0))
+    return user_id if until >= time.time() else None
+PRIVATE_FILES = {
+    "/": ("index.html", HTML),
+    "/guide": ("guide.html", HTML),
+    "/app.js": ("app.js", JAVASCRIPT),
+}
+ADMIN_FILES = {
+    "/admin": ("admin.html", HTML),
+    "/admin.js": ("admin.js", JAVASCRIPT),
 }
 MAX_POINTS = 1500
-MAX_STATIONS = 8  # one distinct colour per station
+MAX_STATIONS = 8  # per user: one distinct colour per station
+MAX_TOTAL_STATIONS = 30  # for the whole server, to protect the collection
 MAX_BODY = 4096
-STATION_GAP = 20  # seconds between the live readings of two stations
+STATION_GAP = 5  # seconds between the live readings of two stations
 MIN_WAIT = 60  # shortest pause between two polls, in seconds
 HISTORY_EVERY = 3600  # seconds between two checks for missing history
 HISTORY_NEAR_LIVE = netatmo.HISTORY_STEP // 2  # a live reading already covers this span
@@ -68,16 +134,69 @@ WIND_RECHECK_DAYS = 2
 WIND_MARGIN = 2 * DAY  # older data is only requested when more than this is missing
 ALERTS_EVERY = 9 * 60  # seconds between two checks of the official warnings
 NEIGHBOURS_KEEP = 2 * 3600  # stop fetching neighbours this long after the option is left off
+SETTING_KEY = re.compile(r"^meteo-[a-z-]{1,30}$")
+MAX_SETTINGS = 30
+MAX_SETTING_LENGTH = 300
+INVITE_BYTES = 9  # 12 characters, impossible to guess
+APP_VERSION = "2.1"
 DEMO_DAYS = 800
 DEMO_DETAILED_DAYS = 14
 DEMO_STATIONS = [
-    {"id": "demo:1", "name": "Valence", "slot": 0},
-    {"id": "demo:2", "name": "Boulot", "slot": 1},
+    {"id": "demo:1", "name": "Valence", "lat": 44.93, "lon": 4.89, "place": "Démo"},
+    {"id": "demo:2", "name": "Boulot", "lat": 44.95, "lon": 4.91, "place": "Démo"},
 ]
+MAX_LOG = 200  # lines kept in the error log
+SHOWN_LOG = 50
+NETATMO_HOURLY_LIMIT = 500  # order of magnitude of Netatmo's limit, only shown as a gauge
+LIMIT_RANGES = {
+    "total_stations": ("Stations au total", 1, 100),
+    "user_stations": ("Stations par personne", 1, MAX_STATIONS),
+    "poll_minutes": ("Minutes entre deux collectes", 5, 60),
+}
+MAX_ANNOUNCEMENT = 300
+ANNOUNCEMENT_HOURS = (0, 1, 6, 24, 72, 168)  # 0: shown until the administrator removes it
+# The display choices of web/app.js with the same defaults, to count who uses what.
+DISPLAY_OPTIONS = (
+    ("meteo-hours", "Météo sur les cartes", False),
+    ("meteo-forecast", "Prévisions", True),
+    ("meteo-forecast-open", "Prévisions ouvertes", False),
+    ("meteo-alerts", "Alertes météo", False),
+    ("meteo-barometer", "Baromètre", True),
+    ("meteo-stats", "Stats", False),
+    ("meteo-nearby", "Stations voisines", False),
+    ("meteo-sky", "Soleil et lune", True),
+    ("meteo-daily", "Min/max par jour", True),
+    ("meteo-compare", "Comparer à l’an dernier", False),
+)
+THEME_NAMES = {"auto": "Automatique", "clair": "Clair", "sombre": "Sombre", "ciel": "Ciel"}
+PERIOD_NAMES = {
+    "24": "24 h", "72": "3 jours", "168": "7 jours", "360": "15 jours",
+    "720": "30 jours", "8760": "1 an", "0": "Tout",
+}
+DEFAULT_PERIOD = "24"
+# Loaded before everything else, so that the page starts with the choices of the account.
+SETTINGS_SCRIPT = """'use strict';
+(function (saved) {
+  if (!saved) return; // an account that never chose anything keeps what this browser has
+  try {
+    Object.keys(localStorage).filter((key) => key.startsWith('meteo-')).forEach((key) => localStorage.removeItem(key));
+    Object.entries(saved).forEach(([key, value]) => localStorage.setItem(key, value));
+  } catch {
+    /* the page then simply starts with its defaults */
+  }
+}(%s));
+"""
 
 
 class StationError(Exception):
     """A station cannot be added; the message is shown to the user."""
+
+
+class InviteError(Exception):
+    """An invitation code is refused; the message is shown to the user."""
+
+    def __init__(self, message="Code d'invitation incorrect ou déjà utilisé"):
+        super().__init__(message)
 
 
 def is_configured(station):
@@ -107,17 +226,6 @@ def search_areas(places):
 def free_slot(stations):
     used = {station.get("slot") for station in stations}
     return next(slot for slot in range(MAX_STATIONS) if slot not in used)
-
-
-def load_stations(config):
-    """Keep complete entries and give each one a colour that never changes."""
-    loaded = [dict(station) for station in config.get("stations", []) if is_configured(station)]
-    loaded = loaded[:MAX_STATIONS]
-    for station in loaded:
-        if station.get("slot") not in range(MAX_STATIONS):
-            station.pop("slot", None)
-            station["slot"] = free_slot(loaded)
-    return loaded
 
 
 def demo_reading(index, ts):
@@ -215,22 +323,26 @@ def demo_neighbours(index, radius):
 
 
 class Dashboard:
-    def __init__(self, config, demo):
+    def __init__(self, config, local=False, demo=False):
+        self.local = local or demo
         self.demo = demo
         self.config = config
-        self.poll_seconds = max(5, int(config.get("poll_minutes", 10))) * 60
+        self.default_poll_minutes = max(5, int(config.get("poll_minutes", 10)))
+        self.started = int(time.time())
         self.history_days = max(1, int(config.get("history_days", DEFAULT_HISTORY_DAYS)))
         self.history_errors = {}
         self.history_wait = {}
         self.wind_errors = {}
         self.wind_wait = {}
         self.modules = {}
-        self.stations = DEMO_STATIONS if demo else load_stations(config)
-        self.forecasts = {station["id"]: demo_forecast(i) for i, station in enumerate(self.stations)} if demo else {}
+        self.forecasts = {}
         self.forecast_errors = {}
         self.forecast_wait = {}
-        self.alerts = {station["id"]: demo_alerts(i) for i, station in enumerate(self.stations)} if demo else {}
+        self.alerts = {}
         self.alert_wait = 0
+        self.logged = {}  # the problems already written in the error log
+        self.first_code = ""  # the code of the installation: the administrator's first one
+        self.invite_lock = threading.Lock()
         self.departments = {}
         self.neighbours = {}
         self.neighbours_wanted = {}
@@ -243,7 +355,7 @@ class Dashboard:
             config.get("client_secret", ""),
             config.get("refresh_token", ""),
         )
-        self.oauth_state = None
+        self.oauth_state = None  # local mode: the Netatmo connection is made from the page
         self.wake = threading.Event()
         self.lock = threading.Lock()
         self.status = {
@@ -274,8 +386,358 @@ class Dashboard:
                 f"CREATE TABLE IF NOT EXISTS wind_estimates (station_id TEXT NOT NULL, "
                 f"ts INTEGER NOT NULL, {columns}, PRIMARY KEY (station_id, ts)) WITHOUT ROWID"
             )
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS stations (id TEXT PRIMARY KEY, lat REAL NOT NULL, "
+                "lon REAL NOT NULL, box REAL, place TEXT)"
+            )
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS user_stations (user_id INTEGER NOT NULL, "
+                "station_id TEXT NOT NULL, name TEXT NOT NULL, slot INTEGER NOT NULL, "
+                "PRIMARY KEY (user_id, station_id)) WITHOUT ROWID"
+            )
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS user_settings (user_id INTEGER PRIMARY KEY, settings TEXT NOT NULL)"
+            )
+            db.execute("CREATE TABLE IF NOT EXISTS invites (user_id INTEGER PRIMARY KEY, code TEXT NOT NULL UNIQUE)")
+            db.execute("CREATE TABLE IF NOT EXISTS options (name TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS error_log (ts INTEGER NOT NULL, kind TEXT NOT NULL, "
+                "station_id TEXT NOT NULL, message TEXT NOT NULL)"
+            )
+            columns = [row["name"] for row in db.execute("PRAGMA table_info(user_stations)")]
+            if "position" not in columns:  # databases created before stations could be reordered
+                db.execute("ALTER TABLE user_stations ADD COLUMN position INTEGER NOT NULL DEFAULT 0")
+        self.accounts = account_tools.Accounts(self.connect)
         if demo:
             self.seed_demo()
+        elif not self.local:
+            # A database prepared on a PC (preparer_vps.py) holds the PC's list: no account owns it here.
+            with self.connect() as db:
+                db.execute("DELETE FROM user_stations WHERE user_id = ?", (LOCAL_USER["id"],))
+        elif not self.option("local_imported"):
+            # The stations of a version 1.x are in config.json: they move to the database once.
+            self.import_config_stations(LOCAL_USER["id"])
+            self.set_option("local_imported", "1")
+
+    @property
+    def stations(self):
+        """The stations at least one user follows: only these are collected."""
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT id, lat, lon, box, place FROM stations "
+                "WHERE id IN (SELECT station_id FROM user_stations) ORDER BY id"
+            ).fetchall()
+        return [{key: row[key] for key in row.keys() if row[key] is not None} for row in rows]
+
+    def user_stations(self, user_id):
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT stations.id, stations.lat, stations.lon, stations.place, user_stations.name, user_stations.slot "
+                "FROM user_stations JOIN stations ON stations.id = user_stations.station_id "
+                "WHERE user_stations.user_id = ? ORDER BY user_stations.position, user_stations.slot",
+                (user_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def register(self, name, password, invited_by=None):
+        """Create an account; the very first one receives the stations of config.json."""
+        is_first = self.accounts.count() == 0
+        user_id = self.accounts.register(name, password, invited_by)
+        if is_first:
+            self.import_config_stations(user_id)
+        return user_id
+
+    def is_admin(self, user):
+        return self.accounts.is_admin(user["id"])
+
+    def is_owner(self, user):
+        return user["id"] == self.accounts.admin_id()
+
+    def admin_users(self):
+        users = self.accounts.list_users()
+        names = {user["id"]: user["name"] for user in users}
+        with self.connect() as db:
+            codes = {row["user_id"]: row["code"] for row in db.execute("SELECT user_id, code FROM invites")}
+        owner = self.accounts.admin_id()
+        for user in users:
+            user["role"] = "owner" if user["id"] == owner else "admin" if user.pop("is_admin") else "user"
+            user["code"] = codes.get(user["id"])
+            if user["invited_by"]:
+                user["invited_by"] = names.get(user["invited_by"], "compte supprimé")
+            user["stations"] = [
+                {"name": station["name"], "url": station_tools.weathermap_url(station["id"])}
+                for station in self.user_stations(user["id"])
+            ]
+        return users
+
+    def delete_user(self, user_id):
+        """Remove an account and its choices; shared measures stay in the database."""
+        with self.edit_lock, self.connect() as db:
+            db.execute("DELETE FROM user_stations WHERE user_id = ?", (user_id,))
+            db.execute("DELETE FROM user_settings WHERE user_id = ?", (user_id,))
+            db.execute("DELETE FROM invites WHERE user_id = ?", (user_id,))
+        self.accounts.delete_user(user_id)
+
+    @property
+    def poll_seconds(self):
+        return self.limits()["poll_minutes"] * 60
+
+    def option(self, name):
+        with self.connect() as db:
+            row = db.execute("SELECT value FROM options WHERE name = ?", (name,)).fetchone()
+        return None if row is None else row["value"]
+
+    def set_option(self, name, value):
+        with self.connect() as db:
+            db.execute("INSERT OR REPLACE INTO options (name, value) VALUES (?, ?)", (name, value))
+
+    def announcement(self, now=None):
+        """Return the message for everyone and its end (None: until it is removed); nothing once it is over."""
+        text = self.option("announcement") or ""
+        until = self.option("announcement_until")
+        until = int(until) if until else None
+        if until is not None and (now or time.time()) >= until:
+            return "", None
+        return text, until
+
+    def set_announcement(self, text, hours):
+        """hours = 0 keeps the message until the administrator removes it."""
+        until = int(time.time()) + hours * 3600 if text and hours else None
+        with self.connect() as db:
+            db.execute("INSERT OR REPLACE INTO options (name, value) VALUES ('announcement', ?)", (text,))
+            db.execute(
+                "INSERT OR REPLACE INTO options (name, value) VALUES ('announcement_until', ?)",
+                ("" if until is None else str(until),),
+            )
+
+    def limits(self):
+        """The limits chosen by the administrator, or the defaults."""
+        defaults = {
+            "total_stations": MAX_TOTAL_STATIONS,
+            "user_stations": MAX_STATIONS,
+            "poll_minutes": self.default_poll_minutes,
+        }
+        with self.connect() as db:
+            saved = {row["name"]: row["value"] for row in db.execute("SELECT name, value FROM options")}
+        limits = {name: int(saved.get(name, default)) for name, default in defaults.items()}
+        limits["neighbours_allowed"] = saved.get("neighbours_allowed", "1") == "1"
+        return limits
+
+    def save_limits(self, form):
+        values = {}
+        for name, (label, low, high) in LIMIT_RANGES.items():
+            value = form.get(name)
+            if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
+                raise ValueError(f"{label} : un nombre entier de {low} à {high}")
+            values[name] = str(value)
+        values["neighbours_allowed"] = "1" if form.get("neighbours_allowed") else "0"
+        for name, value in values.items():
+            self.set_option(name, value)
+        self.wake.set()  # a new pace of collection applies right away
+
+    def option_usage(self):
+        """How many people use each display choice, counting the defaults of those who changed nothing."""
+        with self.connect() as db:
+            saved = {
+                row["user_id"]: json.loads(row["settings"])
+                for row in db.execute("SELECT user_id, settings FROM user_settings")
+            }
+            people = [row["id"] for row in db.execute("SELECT id FROM users")]
+        choices = [saved.get(user_id, {}) for user_id in people]
+
+        def counted(key, names, default):
+            counts = collections.Counter(choice.get(key, default) for choice in choices)
+            return [{"label": label, "count": counts[value]} for value, label in names.items() if counts[value]]
+
+        return {
+            "people": len(people),
+            "options": [
+                {"label": label, "count": sum((choice.get(key, "1" if default else "0") == "1") for choice in choices)}
+                for key, label, default in DISPLAY_OPTIONS
+            ],
+            "themes": counted("meteo-theme", THEME_NAMES, "auto"),
+            "periods": counted("meteo-period", PERIOD_NAMES, DEFAULT_PERIOD),
+        }
+
+    def overview(self):
+        """What the administrator needs to watch over the server."""
+        now = int(time.time())
+        with self.lock:
+            status = dict(self.status)
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT stations.id, stations.place, COUNT(*) AS followers, MIN(user_stations.name) AS name "
+                "FROM stations JOIN user_stations ON user_stations.station_id = stations.id "
+                "GROUP BY stations.id ORDER BY name"
+            ).fetchall()
+            stations = [
+                {
+                    "name": row["name"],
+                    "place": row["place"],
+                    "followers": row["followers"],
+                    "url": station_tools.weathermap_url(row["id"]),
+                    "last": db.execute("SELECT MAX(ts) FROM measures WHERE station_id = ?", (row["id"],)).fetchone()[0],
+                    "error": status["stations"].get(row["id"]) or status["history"].get(row["id"]),
+                }
+                for row in rows
+            ]
+        with self.connect() as db:
+            names = {
+                row["id"]: row["name"] or row["place"] or row["id"] for row in db.execute(
+                    "SELECT stations.id, stations.place, MIN(user_stations.name) AS name FROM stations "
+                    "LEFT JOIN user_stations ON user_stations.station_id = stations.id GROUP BY stations.id"
+                )
+            }
+            log = [
+                {"ts": row["ts"], "kind": row["kind"], "station": names.get(row["station_id"], row["station_id"]), "message": row["message"]}
+                for row in db.execute(
+                    "SELECT ts, kind, station_id, message FROM error_log ORDER BY ts DESC, rowid DESC LIMIT ?", (SHOWN_LOG,)
+                )
+            ]
+            abandoned = [
+                {
+                    "id": row["id"],
+                    "place": row["place"],
+                    "measures": row["measures"],
+                    "last": row["last"],
+                }
+                for row in db.execute(
+                    "SELECT stations.id, stations.place, COUNT(measures.ts) AS measures, MAX(measures.ts) AS last "
+                    "FROM stations LEFT JOIN measures ON measures.station_id = stations.id "
+                    "WHERE stations.id NOT IN (SELECT station_id FROM user_stations) GROUP BY stations.id"
+                )
+            ]
+        files = (self.db_path, Path(f"{self.db_path}-wal"))
+        disk = shutil.disk_usage(DATA)
+        return {
+            "version": APP_VERSION,
+            "now": now,
+            "started": self.started,
+            "setup": self.setup,
+            "last_poll": status["last_poll"],
+            "next_poll": status["next_poll"],
+            "error": status["error"],
+            "alerts_error": status["alerts_error"],
+            "netatmo_calls": netatmo.calls_last_hour(),
+            "netatmo_limit": NETATMO_HOURLY_LIMIT,
+            "database_bytes": sum(path.stat().st_size for path in files if path.exists()),
+            "disk_free": disk.free,
+            "disk_total": disk.total,
+            "users": self.accounts.count(),
+            "online": self.accounts.online_count(),
+            "usage": self.option_usage(),
+            "limits": self.limits(),
+            "announcement": self.announcement(now)[0],
+            "announcement_until": self.announcement(now)[1],
+            "stations": stations,
+            "log": log,
+            "abandoned": abandoned,
+        }
+
+    def invites_open(self):
+        """Whether everyone may invite; otherwise only the administrator's code works."""
+        with self.connect() as db:
+            row = db.execute("SELECT value FROM options WHERE name = 'invites_open'").fetchone()
+        return row is None or row["value"] == "1"
+
+    def set_invites_open(self, is_open):
+        with self.connect() as db:
+            db.execute(
+                "INSERT OR REPLACE INTO options (name, value) VALUES ('invites_open', ?)",
+                ("1" if is_open else "0",),
+            )
+
+    def store_code(self, db, user_id, code=None):
+        code = code or secrets.token_urlsafe(INVITE_BYTES)
+        db.execute("INSERT OR REPLACE INTO invites (user_id, code) VALUES (?, ?)", (user_id, code))
+        return code
+
+    def invite_code(self, user_id):
+        """Return the code a person can share, created the first time it is asked for."""
+        with self.edit_lock, self.connect() as db:
+            row = db.execute("SELECT code FROM invites WHERE user_id = ?", (user_id,)).fetchone()
+            if row:
+                return row["code"]
+            is_first = (
+                user_id == self.accounts.admin_id() and self.first_code
+                and not db.execute("SELECT 1 FROM invites WHERE code = ?", (self.first_code,)).fetchone()
+            )
+            return self.store_code(db, user_id, self.first_code if is_first else None)
+
+    def renew_code(self, user_id):
+        with self.edit_lock, self.connect() as db:
+            return self.store_code(db, user_id)
+
+    def code_owner(self, code):
+        """Return who owns a code, None for the very first account, or refuse it."""
+        if not code:
+            raise InviteError()
+        admin = self.accounts.admin_id()
+        with self.connect() as db:
+            row = db.execute("SELECT user_id FROM invites WHERE code = ?", (code,)).fetchone()
+            if row:
+                return row["user_id"]
+            admin_has_code = admin is not None and db.execute("SELECT 1 FROM invites WHERE user_id = ?", (admin,)).fetchone()
+        if self.first_code and not admin_has_code and secrets.compare_digest(code.encode(), self.first_code.encode()):
+            return admin
+        raise InviteError()
+
+    def register_with_code(self, code, name, password):
+        """Create an account; the code used is replaced, so that it only works once."""
+        with self.invite_lock:  # one registration at a time, so that a code serves once
+            owner = self.code_owner(code)
+            if owner is not None and not self.accounts.is_admin(owner) and not self.invites_open():
+                raise InviteError("Les invitations sont fermées pour le moment")
+            user_id = self.register(name, password, owner)
+            if owner is not None:
+                with self.connect() as db:
+                    self.store_code(db, owner)
+        return user_id
+
+    def user_settings(self, user_id):
+        """Return the display choices of an account, or None if it never made any."""
+        with self.connect() as db:
+            row = db.execute("SELECT settings FROM user_settings WHERE user_id = ?", (user_id,)).fetchone()
+        return json.loads(row["settings"]) if row else None
+
+    def save_settings(self, user_id, settings):
+        is_valid = isinstance(settings, dict) and len(settings) <= MAX_SETTINGS and all(
+            SETTING_KEY.match(key) and isinstance(value, str) and len(value) <= MAX_SETTING_LENGTH
+            for key, value in settings.items()
+        )
+        if not is_valid:
+            raise ValueError("Réglages refusés")
+        with self.connect() as db:
+            db.execute(
+                "INSERT OR REPLACE INTO user_settings (user_id, settings) VALUES (?, ?)",
+                (user_id, json.dumps(settings)),
+            )
+
+    def import_config_stations(self, user_id, wanted=None):
+        """Give an account the stations of config.json, in their order and with their colours."""
+        if wanted is None:
+            wanted = [s for s in self.config.get("stations", []) if is_configured(s)]
+        wanted = wanted[:MAX_STATIONS]
+        given = []
+        for station in wanted:
+            slot = station.get("slot")
+            is_free = slot in range(MAX_STATIONS) and all(other["slot"] != slot for other in given)
+            given.append({**station, "slot": slot if is_free else None})
+        for station in given:
+            if station["slot"] is None:
+                station["slot"] = free_slot(given)
+        with self.edit_lock, self.connect() as db:
+            for position, station in enumerate(given):
+                db.execute(
+                    "INSERT OR IGNORE INTO stations (id, lat, lon, box, place) VALUES (?, ?, ?, ?, ?)",
+                    (station["id"], station["lat"], station["lon"], station.get("box"), station.get("place")),
+                )
+                db.execute(
+                    "INSERT OR IGNORE INTO user_stations (user_id, station_id, name, slot, position) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (user_id, station["id"], station.get("name") or station["id"], station["slot"], position),
+                )
+        self.wake.set()
 
     @contextlib.contextmanager
     def connect(self):
@@ -309,11 +771,16 @@ class Dashboard:
         )
 
     def seed_demo(self):
+        """Simulated stations and two years of measures, written once in demo.db."""
+        self.forecasts = {station["id"]: demo_forecast(i) for i, station in enumerate(DEMO_STATIONS)}
+        self.alerts = {station["id"]: demo_alerts(i) for i, station in enumerate(DEMO_STATIONS)}
+        if not self.user_stations(LOCAL_USER["id"]):
+            self.import_config_stations(LOCAL_USER["id"], DEMO_STATIONS)
         with self.connect() as db:
             if db.execute("SELECT 1 FROM measures LIMIT 1").fetchone():
                 return
             start = int(time.time()) // 3600 * 3600
-            self.store_wind(db, self.stations[0]["id"], {
+            self.store_wind(db, DEMO_STATIONS[0]["id"], {
                 ts: {name: demo_reading(1, ts)[name] for name in wind_estimate.FIELDS}
                 for ts in range(start - DEMO_DAYS * DAY, start + 1, 3600)
             })
@@ -321,7 +788,7 @@ class Dashboard:
             detailed = now - DEMO_DETAILED_DAYS * DAY
             gap = range(now - 3 * DAY, now - 3 * DAY + 5 * 3600)
             stamps = [*range(now - DEMO_DAYS * DAY, detailed, netatmo.HISTORY_STEP), *range(detailed, now + 1, 600)]
-            for index, station in enumerate(self.stations):
+            for index, station in enumerate(DEMO_STATIONS):
                 rain = {}
                 for ts in stamps:
                     if index == 1 and ts in gap:
@@ -332,6 +799,10 @@ class Dashboard:
                     step = netatmo.HISTORY_STEP if ts < detailed else 600
                     rain[day] = rain.get(day, 0) + reading["rain_60min"] * step / 3600
                 self.store_rain(db, station["id"], {day: round(mm, 1) for day, mm in rain.items()})
+
+    def refuse_in_demo(self, action):
+        if self.demo:
+            raise StationError(f"{action} indisponible en mode démonstration")
 
     @property
     def setup(self):
@@ -401,7 +872,7 @@ class Dashboard:
         self.history_wait[station_id] = now + HISTORY_EVERY
         windows, rain_begin = self.history_plan(station_id, now)
         with self.lock:
-            self.status["history_running"] = station["name"]
+            self.status["history_running"] = station_id
         try:
             rows = {}
             for begin, end in windows:
@@ -444,12 +915,11 @@ class Dashboard:
         if "box" in station or not location:
             return
         lon, lat = location
-        exact = {"lat": lat, "lon": lon, "box": netatmo.EXACT_BOX_DEG}
-        with self.edit_lock:
-            self.save_stations([
-                {**item, **exact} if item["id"] == station["id"] else item
-                for item in self.stations
-            ])
+        with self.connect() as db:
+            db.execute(
+                "UPDATE stations SET lat = ?, lon = ?, box = ? WHERE id = ?",
+                (lat, lon, netatmo.EXACT_BOX_DEG, station["id"]),
+            )
 
     def collect_history(self):
         """Work on one station per poll, so history never crowds out live readings."""
@@ -568,12 +1038,12 @@ class Dashboard:
             except Exception:  # an extra indication only: the card simply goes without it
                 self.neighbours_wait[station_id] = now + self.poll_seconds
 
-    def neighbours_summary(self, station, index, radius, now):
+    def neighbours_summary(self, station, radius, now):
         """Return the medians of a station, or None when the option is off."""
-        if not radius:
+        if not radius or not self.limits()["neighbours_allowed"]:
             return None
         if self.demo:
-            return demo_neighbours(index, radius)
+            return demo_neighbours(station.get("slot", 0), radius)
         station_id = station["id"]
         is_new = station_id not in self.neighbours_wanted
         self.neighbours_wanted[station_id] = now
@@ -584,11 +1054,11 @@ class Dashboard:
             return {"radius": radius, "pending": True}
         return neighbours.summarise(readings, station, radius, now)
 
-    def neighbours_comparison(self, station, index, latest, radius, now):
-        if not radius or not latest:
+    def neighbours_comparison(self, station, latest, radius, now):
+        if not radius or not latest or not self.limits()["neighbours_allowed"]:
             return None
         if self.demo:
-            return demo_comparison(index, radius)
+            return demo_comparison(station.get("slot", 0), radius)
         readings = self.neighbours.get(station["id"])
         return None if readings is None else neighbours.compare(readings, station, latest, radius, now)
 
@@ -597,17 +1067,18 @@ class Dashboard:
             self.status.update(last_poll=int(time.time()), error=general, stations=errors)
 
     def poll(self):
-        errors = {}
-        general = None
-        if not self.demo:
-            self.collect_forecast()  # first: it is quick, and the sky shows right after a restart
-            self.collect_alerts()
         if self.demo:
             ts = int(time.time()) // 600 * 600
             with self.connect() as db:
-                for index, station in enumerate(self.stations):
+                for index, station in enumerate(DEMO_STATIONS):
                     self.insert(db, station["id"], demo_reading(index, ts))
-        elif self.setup == "ok":
+            self.publish({}, None)
+            return
+        errors = {}
+        general = None
+        self.collect_forecast()  # first: it is quick, and the sky shows right after a restart
+        self.collect_alerts()
+        if self.setup == "ok":
             for index, station in enumerate(self.stations):
                 if index:
                     time.sleep(STATION_GAP)
@@ -619,7 +1090,7 @@ class Dashboard:
                 except Exception as err:  # keep collecting: the next poll may work
                     errors[station["id"]] = str(err)[:200]
         self.publish(errors, general)
-        if not self.demo and self.setup == "ok" and general is None:
+        if self.setup == "ok" and general is None:
             try:
                 self.collect_neighbours()
                 self.collect_history()
@@ -629,15 +1100,60 @@ class Dashboard:
         with self.lock:
             self.status["history"] = dict(self.history_errors)
             self.status["wind"] = dict(self.wind_errors)
+        self.log_changes()
 
-    def save_stations(self, updated):
-        # Re-read the file so edits made while the app runs are not overwritten.
-        config = json.loads(CONFIG.read_text(encoding="utf-8-sig"))
-        config["stations"] = updated
-        tmp = CONFIG.with_suffix(".tmp")
-        tmp.write_text(json.dumps(config, indent=2, ensure_ascii=False), encoding="utf-8")
-        os.replace(tmp, CONFIG)
-        self.stations = updated
+    def log_changes(self):
+        """Write each new collection problem, and its end, in the error log; repeats are left out."""
+        with self.lock:
+            status = dict(self.status)
+        current = {("Netatmo", ""): status["error"], ("Alertes météo", ""): status["alerts_error"]}
+        for kind, key in (("Mesures", "stations"), ("Historique", "history"), ("Vent estimé", "wind"), ("Prévisions", "forecast")):
+            for station_id, message in status[key].items():
+                current[(kind, station_id)] = message
+        now = int(time.time())
+        entries = []
+        for spot in sorted(set(current) | set(self.logged)):
+            message, before = current.get(spot), self.logged.get(spot)
+            if message and message != before:
+                entries.append((now, *spot, message))
+            elif before and not message:
+                entries.append((now, *spot, "Rétabli"))
+        self.logged = {spot: message for spot, message in current.items() if message}
+        if entries:
+            with self.connect() as db:
+                db.executemany("INSERT INTO error_log (ts, kind, station_id, message) VALUES (?, ?, ?, ?)", entries)
+                db.execute(
+                    "DELETE FROM error_log WHERE rowid NOT IN "
+                    "(SELECT rowid FROM error_log ORDER BY ts DESC, rowid DESC LIMIT ?)",
+                    (MAX_LOG,),
+                )
+
+    def forget_station(self, station_id):
+        """Delete everything stored about a station that nobody follows any more."""
+        with self.edit_lock, self.connect() as db:
+            if db.execute("SELECT 1 FROM user_stations WHERE station_id = ?", (station_id,)).fetchone():
+                raise StationError("Quelqu'un suit encore cette station")
+            if not db.execute("SELECT 1 FROM stations WHERE id = ?", (station_id,)).fetchone():
+                raise StationError("Station inconnue")
+            for table in ("measures", "wind_estimates", "rain_days", "history_progress", "history_start", "error_log"):
+                db.execute(f"DELETE FROM {table} WHERE station_id = ?", (station_id,))
+            db.execute("DELETE FROM stations WHERE id = ?", (station_id,))
+        for cache in (self.modules, self.forecasts, self.alerts, self.neighbours, self.departments):
+            cache.pop(station_id, None)
+        compact = sqlite3.connect(self.db_path, timeout=15, isolation_level=None)
+        try:
+            compact.execute("VACUUM")  # gives the space back to the disk
+        finally:
+            compact.close()
+
+    def backup_to(self, path):
+        """Write a consistent copy of the database, taken while the site keeps running."""
+        target = sqlite3.connect(path)
+        try:
+            with self.connect() as db:
+                db.backup(target)
+        finally:
+            target.close()
 
     def locate(self, station_id, places):
         """Look for the station around each place, then in the areas next to them.
@@ -658,76 +1174,97 @@ class Dashboard:
             "Indiquez une commune plus proche ou des coordonnées."
         )
 
-    def add_station(self, link, name, place):
-        if self.demo:
-            raise StationError("Ajout indisponible en mode démonstration")
+    def find_new_station(self, station_id, place):
+        """Return a row for the stations table and its first reading, if any."""
+        if len(self.stations) >= self.limits()["total_stations"]:
+            raise StationError("Le serveur suit déjà le maximum de stations")
+        try:
+            places = station_tools.find_places(place)
+        except OSError:
+            raise StationError("Recherche de la commune impossible : réessayez ou indiquez des coordonnées") from None
+        if not places:
+            raise StationError("Lieu introuvable : essayez avec le code postal ou des coordonnées")
+        try:
+            chosen, reading = self.locate(station_id, places)
+        except (netatmo.ApiError, netatmo.AuthRequired, OSError) as err:
+            raise StationError(f"Netatmo ne répond pas correctement : {err}") from None
+        row = {"id": station_id, "lat": chosen["lat"], "lon": chosen["lon"], "box": None, "place": chosen["label"]}
+        location = reading.get("location") if reading else None
+        if location:
+            row.update(lon=location[0], lat=location[1], box=netatmo.EXACT_BOX_DEG)
+        return row, reading
+
+    def add_station(self, user_id, link, name, place):
+        self.refuse_in_demo("Ajout")
         station_id = station_tools.parse_station_id(link)
         if not station_id:
             raise StationError("Lien non reconnu : il doit venir de la carte Netatmo et contenir stationid=…")
-        with self.edit_lock:
-            if any(station["id"] == station_id for station in self.stations):
-                raise StationError("Cette station est déjà dans le dashboard")
-            if len(self.stations) >= MAX_STATIONS:
-                raise StationError(f"{MAX_STATIONS} stations au maximum")
-            try:
-                places = station_tools.find_places(place)
-            except OSError:
-                raise StationError("Recherche de la commune impossible : réessayez ou indiquez des coordonnées") from None
-            if not places:
-                raise StationError("Lieu introuvable : essayez avec le code postal ou des coordonnées")
-            try:
-                chosen, reading = self.locate(station_id, places)
-            except (netatmo.ApiError, netatmo.AuthRequired, OSError) as err:
-                raise StationError(f"Netatmo ne répond pas correctement : {err}") from None
-            station = {
-                "id": station_id,
-                "name": name.strip()[:40] or chosen["label"],
-                "lat": chosen["lat"],
-                "lon": chosen["lon"],
-                "place": chosen["label"],
-                "slot": free_slot(self.stations),
-            }
-            location = reading.get("location") if reading else None
-            if location:
-                station.update(lon=location[0], lat=location[1], box=netatmo.EXACT_BOX_DEG)
-            self.save_stations([*self.stations, station])
+        mine = self.user_stations(user_id)
+        if any(station["id"] == station_id for station in mine):
+            raise StationError("Cette station est déjà dans votre liste")
+        most = self.limits()["user_stations"]
+        if len(mine) >= most:
+            raise StationError(f"{most} stations au maximum")
+        with self.connect() as db:
+            known = db.execute("SELECT place FROM stations WHERE id = ?", (station_id,)).fetchone()
+        # A station someone already follows is simply shared: nothing to search.
+        row, reading = (None, None) if known else self.find_new_station(station_id, place)
+        label = known["place"] if known else row["place"]
+        with self.edit_lock, self.connect() as db:
+            mine = self.user_stations(user_id)
+            if len(mine) >= most:
+                raise StationError(f"{most} stations au maximum")
+            if row:
+                db.execute(
+                    "INSERT OR IGNORE INTO stations (id, lat, lon, box, place) VALUES (?, ?, ?, ?, ?)",
+                    (row["id"], row["lat"], row["lon"], row["box"], row["place"]),
+                )
             if reading:
                 self.modules[station_id] = reading["modules"]
-                with self.connect() as db:
-                    self.insert(db, station_id, reading)
-                self.wake.set()  # its history is fetched by the collector right away
-            return station
+                self.insert(db, station_id, reading)
+            shown_name = name.strip()[:MAX_NAME] or label or station_id
+            db.execute(
+                "INSERT OR IGNORE INTO user_stations (user_id, station_id, name, slot, position) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (user_id, station_id, shown_name, free_slot(mine), len(mine)),
+            )
+        self.wake.set()  # its history is fetched by the collector right away
+        return {"name": shown_name, "place": label}
 
-    def rename_station(self, station_id, name):
+    def rename_station(self, user_id, station_id, name):
+        self.refuse_in_demo("Renommage")
         name = name.strip()
-        if self.demo:
-            raise StationError("Renommage indisponible en mode démonstration")
         if not name or len(name) > MAX_NAME:
             raise StationError(f"Le nom doit faire entre 1 et {MAX_NAME} caractères")
-        with self.edit_lock:
-            if not any(station["id"] == station_id for station in self.stations):
-                raise StationError("Station introuvable")
-            self.save_stations([
-                {**station, "name": name} if station["id"] == station_id else station
-                for station in self.stations
-            ])
+        with self.connect() as db:
+            changed = db.execute(
+                "UPDATE user_stations SET name = ? WHERE user_id = ? AND station_id = ?",
+                (name, user_id, station_id),
+            ).rowcount
+        if not changed:
+            raise StationError("Station introuvable")
 
-    def reorder_stations(self, ordered_ids):
+    def reorder_stations(self, user_id, ordered_ids):
         """Save the display order; the colours stay with their stations."""
-        if self.demo:
-            raise StationError("Déplacement indisponible en mode démonstration")
-        with self.edit_lock:
-            by_id = {station["id"]: station for station in self.stations}
-            if sorted(ordered_ids) != sorted(by_id):
-                raise StationError("Liste de stations incorrecte")
-            self.save_stations([by_id[station_id] for station_id in ordered_ids])
+        self.refuse_in_demo("Déplacement")
+        mine = [station["id"] for station in self.user_stations(user_id)]
+        if sorted(ordered_ids) != sorted(mine):
+            raise StationError("Liste de stations incorrecte")
+        with self.connect() as db:
+            for position, station_id in enumerate(ordered_ids):
+                db.execute(
+                    "UPDATE user_stations SET position = ? WHERE user_id = ? AND station_id = ?",
+                    (position, user_id, station_id),
+                )
 
-    def remove_station(self, station_id):
-        """Forget a station; its stored history stays in the database."""
-        if self.demo:
-            raise StationError("Suppression indisponible en mode démonstration")
-        with self.edit_lock:
-            self.save_stations([s for s in self.stations if s["id"] != station_id])
+    def remove_station(self, user_id, station_id):
+        """Forget a station for this user; its stored history stays in the database."""
+        self.refuse_in_demo("Suppression")
+        with self.connect() as db:
+            db.execute(
+                "DELETE FROM user_stations WHERE user_id = ? AND station_id = ?",
+                (user_id, station_id),
+            )
 
     def collect_forever(self):
         while True:
@@ -784,20 +1321,22 @@ class Dashboard:
             )
         ]
 
-    def time_span(self, db, hours, window, now):
-        """Return the first stored measure, and the start and end of the period asked for."""
-        first = db.execute("SELECT MIN(ts) FROM measures").fetchone()[0] or now
-        if window:
-            return first, window[0], min(window[1], now)
-        return first, now - hours * 3600 if hours else first, now
+    def user_status(self, mine):
+        """The collection status, limited to what concerns this user's stations."""
+        names = {station["id"]: station["name"] for station in mine}
+        with self.lock:
+            status = dict(self.status)
+        for key in ("stations", "history", "wind", "forecast"):
+            status[key] = {sid: message for sid, message in status[key].items() if sid in names}
+        status["history_running"] = names.get(status["history_running"])
+        return status
 
-    def stats_payload(self, hours, window=None, radius=0):
+    def stats_payload(self, user, hours, window=None, radius=0):
         """Figures of the period and records; they are computed on demand, never stored."""
         now = int(time.time())
+        stations = []
         with self.connect() as db:
-            _, since, until = self.time_span(db, hours, window, now)
-            stations = []
-            for index, station in enumerate(self.stations):
+            for station in self.user_stations(user["id"]):
                 latest = db.execute(
                     "SELECT * FROM measures WHERE station_id = ? ORDER BY ts DESC LIMIT 1",
                     (station["id"],),
@@ -805,26 +1344,39 @@ class Dashboard:
                 oldest = db.execute(
                     "SELECT MIN(ts) FROM measures WHERE station_id = ?", (station["id"],)
                 ).fetchone()[0]
+                if window:
+                    since, until = window[0], min(window[1], now)
+                else:
+                    since, until = (now - hours * 3600 if hours else oldest or now), now
                 stations.append({
                     "id": station["id"],
                     "oldest": oldest,
                     **stats.for_station(db, station["id"], since, until),
-                    "neighbours": self.neighbours_comparison(station, index, latest, radius, now),
+                    "neighbours": self.neighbours_comparison(station, latest, radius, now),
                 })
-        return {"since": since, "until": until, "stations": stations}
+        return {"stations": stations}
 
-    def payload(self, hours, window=None, daily=False, radius=0):
+    def payload(self, user, hours, window=None, daily=False, radius=0):
         """Return the data of the last `hours`, or of a (start, end) window if given.
 
         With `daily`, periods of a week or more are grouped by calendar day.
         """
         now = int(time.time())
+        mine = self.user_stations(user["id"])
         with self.connect() as db:
-            first, since, until = self.time_span(db, hours, window, now)
+            marks = ", ".join("?" for _ in mine)
+            first = db.execute(
+                f"SELECT MIN(ts) FROM measures WHERE station_id IN ({marks})",
+                [station["id"] for station in mine],
+            ).fetchone()[0] or now
+            if window:
+                since, until = window[0], min(window[1], now)
+            else:
+                since, until = (now - hours * 3600 if hours else first), now
             daily = daily and until - since >= DAILY_MIN_SPAN
             bucket = DAY if daily else max(1, math.ceil((until - since) / MAX_POINTS))
             stations = []
-            for index, station in enumerate(self.stations):
+            for station in mine:
                 latest = db.execute(
                     "SELECT * FROM measures WHERE station_id = ? ORDER BY ts DESC LIMIT 1",
                     (station["id"],),
@@ -852,16 +1404,21 @@ class Dashboard:
                     "wind_latest": dict(wind_latest) if wind_latest else None,
                     "forecast": self.forecasts.get(station["id"]),
                     "alerts": self.alerts.get(station["id"], []),
-                    "neighbours": self.neighbours_summary(station, index, radius, now),
+                    "neighbours": self.neighbours_summary(station, radius, now),
                     "barometer": self.barometer(db, station["id"], latest, now),
                     "wind_estimate": self.series(
                         db, station["id"], since, until, bucket, daily,
                         "wind_estimates", wind_estimate.FIELDS,
                     ),
                 })
-        with self.lock:
-            status = dict(self.status)
         return {
+            "user": user["name"],
+            "is_admin": self.is_admin(user),
+            "invites_open": self.invites_open(),
+            "neighbours_allowed": self.limits()["neighbours_allowed"],
+            "announcement": self.announcement(now)[0],
+            "mode": "local" if self.local else "online",
+            "version": APP_VERSION,
             "demo": self.demo,
             "now": now,
             "first": first,
@@ -871,7 +1428,7 @@ class Dashboard:
             "daily": daily,
             "poll_seconds": self.poll_seconds,
             "setup": self.setup,
-            "status": status,
+            "status": self.user_status(mine),
             "stations": stations,
         }
 
@@ -899,6 +1456,19 @@ def read_radius(query):
         return 0
 
 
+def session_cookie(token, max_age, is_secure):
+    parts = [f"{COOKIE}={token}", "Path=/", f"Max-Age={max_age}", "HttpOnly", "SameSite=Lax"]
+    return "; ".join(parts + (["Secure"] if is_secure else []))
+
+
+def page(name, local):
+    """A file of web/; in local mode, the pages are marked so that the account parts stay hidden."""
+    body = (WEB / name).read_bytes()
+    if local and name.endswith(".html"):
+        body = body.replace(b"<html", b'<html class="mode-local"', 1)
+    return body
+
+
 def is_password(header, password):
     """Check an HTTP Basic "Authorization" header; the user name does not matter."""
     kind, _, value = header.partition(" ")
@@ -916,14 +1486,13 @@ def is_local_host(header):
     return host in LOCAL_HOSTS
 
 
-def protected(method):
-    def wrapper(handler):
-        if handler.authorized():
-            method(handler)
-    return wrapper
+def is_online_only(path):
+    return any(path == item or (item.endswith("/") and path.startswith(item)) for item in ONLINE_ONLY)
 
 
-def make_handler(app, port, password=""):
+def make_handler(app, invite_code="", secure_cookie=True, password="", port=8765):
+    """invite_code and secure_cookie serve the online mode; password and port the local mode."""
+    app.first_code = invite_code
     redirect_uri = f"http://localhost:{port}/callback"
 
     class Handler(BaseHTTPRequestHandler):
@@ -931,6 +1500,7 @@ def make_handler(app, port, password=""):
             pass
 
         def authorized(self):
+            """Local mode: the optional password, else only this computer's own names."""
             # Without a password the dashboard only answers to this computer's own names, so a
             # website that points its address at 127.0.0.1 ("DNS rebinding") cannot use it.
             if not password and not is_local_host(self.headers.get("Host", "")):
@@ -946,102 +1516,25 @@ def make_handler(app, port, password=""):
             self.end_headers()
             return False
 
-        def reply(self, code, body, content_type):
-            self.send_response(code)
-            self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store")
-            self.end_headers()
-            self.wfile.write(body)
-
-        def redirect(self, location):
-            self.send_response(302)
-            self.send_header("Location", location)
-            self.end_headers()
-
-        @protected
-        def do_GET(self):
-            url = urllib.parse.urlsplit(self.path)
-            query = urllib.parse.parse_qs(url.query)
-            if url.path in STATIC:
-                name, content_type = STATIC[url.path]
-                self.reply(200, (WEB / name).read_bytes(), content_type)
-            elif url.path == "/api/data":
-                daily = query.get("daily", ["0"])[0] == "1"
-                body = json.dumps(app.payload(read_hours(query), read_window(query), daily, read_radius(query))).encode()
-                self.reply(200, body, "application/json")
-            elif url.path == "/api/stats":
-                body = json.dumps(app.stats_payload(read_hours(query), read_window(query), read_radius(query))).encode()
-                self.reply(200, body, "application/json")
-            elif url.path == "/connecter" and app.setup == "auth":
-                app.oauth_state = secrets.token_urlsafe(24)
-                self.redirect(app.tokens.authorize_url(redirect_uri, app.oauth_state))
-            elif url.path == "/callback":
-                self.callback(query)
-            else:
+        def refused_here(self):
+            """True when the local mode has already answered: wrong password or address, or an account page."""
+            if not app.local:
+                return False
+            if not self.authorized():
+                return True
+            path = urllib.parse.urlsplit(self.path).path
+            if path == "/login":
+                self.redirect("/")
+            elif is_online_only(path):
                 self.reply(404, b"Introuvable", "text/plain; charset=utf-8")
-
-        def reply_json(self, code, payload):
-            self.reply(code, json.dumps(payload).encode(), "application/json")
-
-        def read_form(self):
-            """Return the JSON body, or None after refusing the request."""
-            # Requiring JSON stops other websites from posting here unnoticed.
-            is_json = self.headers.get_content_type() == "application/json"
-            length = int(self.headers.get("Content-Length") or 0)
-            is_known = self.path in ("/api/stations", "/api/stations/order")
-            if is_known and is_json and 0 < length <= MAX_BODY:
-                try:
-                    form = json.loads(self.rfile.read(length))
-                    if isinstance(form, dict):
-                        return form
-                except ValueError:
-                    pass
-            self.reply_json(400, {"error": "Requête refusée"})
-            return None
-
-        @protected
-        def do_POST(self):
-            form = self.read_form()
-            if form is None:
-                return
-            try:
-                station = app.add_station(
-                    str(form.get("link", "")), str(form.get("name", "")), str(form.get("place", "")),
-                )
-            except StationError as err:
-                self.reply_json(422, {"error": str(err)})
             else:
-                self.reply_json(201, {"name": station["name"], "place": station["place"]})
+                return False
+            return True
 
-        @protected
-        def do_PATCH(self):
-            form = self.read_form()
-            if form is None:
-                return
-            try:
-                if self.path == "/api/stations/order":
-                    app.reorder_stations([str(item) for item in form.get("ids", [])])
-                else:
-                    app.rename_station(str(form.get("id", "")), str(form.get("name", "")))
-            except (StationError, TypeError) as err:
-                self.reply_json(422, {"error": str(err)})
-            else:
-                self.reply_json(200, {})
-
-        @protected
-        def do_DELETE(self):
-            url = urllib.parse.urlsplit(self.path)
-            station_id = urllib.parse.parse_qs(url.query).get("id", [""])[0]
-            if url.path != "/api/stations" or not station_id:
-                self.reply_json(400, {"error": "Requête refusée"})
-                return
-            try:
-                app.remove_station(station_id)
-            except StationError as err:
-                self.reply_json(422, {"error": str(err)})
-            else:
-                self.reply_json(200, {})
+        def connect_netatmo(self):
+            """Local mode: send the browser to Netatmo, which comes back on /callback."""
+            app.oauth_state = secrets.token_urlsafe(24)
+            self.redirect(app.tokens.authorize_url(redirect_uri, app.oauth_state))
 
         def callback(self, query):
             state = query.get("state", [""])[0]
@@ -1064,6 +1557,457 @@ def make_handler(app, port, password=""):
                 app.wake.set()
             self.redirect("/")
 
+        def send_common_headers(self):
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("X-Frame-Options", "DENY")
+            self.send_header("Referrer-Policy", "same-origin")
+            self.send_header("X-Robots-Tag", "noindex, nofollow")  # not listed by search engines
+
+        def reply(self, code, body, content_type, cookie=None):
+            self.send_response(code)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_common_headers()
+            if cookie:
+                self.send_header("Set-Cookie", cookie)
+            self.end_headers()
+            self.wfile.write(body)
+
+        def reply_json(self, code, payload, cookie=None):
+            self.reply(code, json.dumps(payload).encode(), "application/json", cookie)
+
+        def redirect(self, location):
+            self.send_response(302)
+            self.send_header("Location", location)
+            self.send_header("Content-Length", "0")
+            self.send_common_headers()
+            self.end_headers()
+
+        def session_token(self):
+            cookies = http.cookies.SimpleCookie()
+            try:
+                cookies.load(self.headers.get("Cookie", ""))
+            except http.cookies.CookieError:
+                return ""
+            return cookies[COOKIE].value if COOKIE in cookies else ""
+
+        def current_user(self):
+            if app.local:
+                return LOCAL_USER  # the password, if any, was checked by refused_here
+            token = self.session_token()
+            return app.accounts.session_user(token) if token else None
+
+        def refuse_guest(self):
+            self.reply_json(401, {"error": "Connexion nécessaire"})
+
+        def current_admin(self):
+            """Return the signed-in administrator, or None after refusing the request."""
+            user = self.current_user()
+            if not user:
+                self.refuse_guest()
+            elif not app.is_admin(user):
+                self.reply_json(403, {"error": "Réservé à l'administrateur"})
+            else:
+                return user
+            return None
+
+        def read_form(self):
+            """Return the JSON body, or None after refusing the request."""
+            # Requiring JSON stops other websites from posting here unnoticed.
+            is_json = self.headers.get_content_type() == "application/json"
+            length = int(self.headers.get("Content-Length") or 0)
+            if is_json and 0 < length <= MAX_BODY:
+                try:
+                    form = json.loads(self.rfile.read(length))
+                    if isinstance(form, dict):
+                        return form
+                except ValueError:
+                    pass
+            self.reply_json(400, {"error": "Requête refusée"})
+            return None
+
+        def do_GET(self):
+            if self.refused_here():
+                return
+            url = urllib.parse.urlsplit(self.path)
+            if app.local and url.path in ("/connecter", "/callback"):
+                if url.path == "/callback":
+                    self.callback(urllib.parse.parse_qs(url.query))
+                elif app.setup == "auth":
+                    self.connect_netatmo()
+                else:
+                    self.redirect("/")
+                return
+            # Déjà connecté : la page de connexion renvoie dans l'appli (sauf pour une invitation)
+            if url.path == "/login" and "code" not in urllib.parse.parse_qs(url.query) and self.current_user():
+                self.redirect("/")
+                return
+            if url.path in PUBLIC_FILES:
+                name, content_type = PUBLIC_FILES[url.path]
+                self.reply(200, page(name, app.local), content_type)
+                return
+            if url.path == "/entrer":
+                self.enter_from_portal(urllib.parse.parse_qs(url.query).get("c", [""])[0])
+                return
+            user = self.current_user()
+            if url.path == "/settings.js":
+                settings = app.user_settings(user["id"]) if user else None
+                self.reply(200, (SETTINGS_SCRIPT % json.dumps(settings)).encode(), JAVASCRIPT)
+            elif url.path in ADMIN_FILES:
+                if not user:
+                    self.redirect("/login")
+                elif not app.is_admin(user):
+                    self.redirect("/")
+                else:
+                    name, content_type = ADMIN_FILES[url.path]
+                    self.reply(200, page(name, app.local), content_type)
+            elif url.path in PRIVATE_FILES:
+                if not user:
+                    self.redirect("/login")
+                    return
+                name, content_type = PRIVATE_FILES[url.path]
+                self.reply(200, page(name, app.local), content_type)
+            elif url.path == "/api/data":
+                if not user:
+                    self.refuse_guest()
+                    return
+                query = urllib.parse.parse_qs(url.query)
+                daily = query.get("daily", ["0"])[0] == "1"
+                body = json.dumps(
+                    app.payload(user, read_hours(query), read_window(query), daily, read_radius(query))
+                ).encode()
+                self.reply(200, body, "application/json")
+            elif url.path == "/api/stats":
+                if not user:
+                    self.refuse_guest()
+                    return
+                query = urllib.parse.parse_qs(url.query)
+                body = json.dumps(
+                    app.stats_payload(user, read_hours(query), read_window(query), read_radius(query))
+                ).encode()
+                self.reply(200, body, "application/json")
+            elif url.path == "/api/admin/overview":
+                if self.current_admin():
+                    self.reply_json(200, app.overview())
+            elif url.path == "/api/admin/backup":
+                self.send_backup()
+            elif url.path == "/api/admin/users":
+                admin = self.current_admin()
+                if admin:
+                    self.reply_json(200, {
+                        "users": app.admin_users(),
+                        "invites_open": app.invites_open(),
+                        "me": admin["id"],
+                        "owner": app.accounts.admin_id(),
+                        "now": int(time.time()),
+                    })
+            elif url.path == "/api/invite":
+                if not user:
+                    self.refuse_guest()
+                    return
+                may_invite = app.invites_open() or app.is_admin(user)
+                self.reply_json(200, {"code": app.invite_code(user["id"]) if may_invite else None})
+            else:
+                self.reply(404, b"Introuvable", "text/plain; charset=utf-8")
+
+        def send_backup(self):
+            if not self.current_admin():
+                return
+            name = f"meteo-{datetime.date.today().isoformat()}.db"
+            with tempfile.TemporaryDirectory(dir=DATA) as folder:
+                path = Path(folder) / name
+                app.backup_to(path)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/vnd.sqlite3")
+                self.send_header("Content-Length", str(path.stat().st_size))
+                self.send_header("Content-Disposition", f'attachment; filename="{name}"')
+                self.send_common_headers()
+                self.end_headers()
+                with path.open("rb") as file:
+                    shutil.copyfileobj(file, self.wfile)
+
+        def may_manage(self, admin, user_id):
+            """Only the owner manages administrators, and nobody manages the owner."""
+            if user_id == app.accounts.admin_id():
+                return False
+            return app.is_owner(admin) or not app.accounts.is_admin(user_id)
+
+        def start_session(self, user_id):
+            token = app.accounts.create_session(user_id)
+            cookie = session_cookie(token, account_tools.SESSION_SECONDS, secure_cookie)
+            self.reply_json(200, {}, cookie)
+
+        def login(self, form):
+            try:
+                user_id = app.accounts.login(str(form.get("name", "")), str(form.get("password", "")))
+            except account_tools.AccountError as err:
+                time.sleep(AUTH_DELAY)
+                self.reply_json(401, {"error": str(err)})
+            else:
+                self.start_session(user_id)
+
+        def create_account(self, form):
+            try:
+                user_id = app.register_with_code(
+                    str(form.get("code", "")), str(form.get("name", "")), str(form.get("password", "")),
+                )
+            except InviteError as err:
+                time.sleep(AUTH_DELAY)
+                self.reply_json(403, {"error": str(err)})
+            except account_tools.AccountError as err:
+                self.reply_json(422, {"error": str(err)})
+            else:
+                self.start_session(user_id)
+
+        def enter_from_portal(self, code):
+            user_id = take_portal_code(code)
+            if not user_id:
+                # Code déjà utilisé : sur téléphone, l'appli installée rouvre le même lien juste après le navigateur.
+                # La session est alors déjà ouverte : on entre dans l'appli au lieu d'afficher la connexion.
+                self.redirect("/" if self.current_user() else "/login")
+                return
+            token = app.accounts.create_session(user_id)
+            self.send_response(302)
+            self.send_header("Location", "/")
+            self.send_header("Content-Length", "0")
+            self.send_common_headers()
+            self.send_header("Set-Cookie", session_cookie(token, account_tools.SESSION_SECONDS, secure_cookie))
+            self.end_headers()
+
+        def portal_check(self):
+            """Internal call from the portal: never from the internet (no Cloudflare header), key required."""
+            key, given = portal_key(), self.headers.get("X-Portail-Cle") or ""
+            if not key or self.headers.get("CF-Connecting-IP") or not secrets.compare_digest(given.encode(), key.encode()):
+                self.reply(404, b"Introuvable", "text/plain; charset=utf-8")
+                return
+            length = int(self.headers.get("Content-Length") or 0)
+            try:
+                form = json.loads(self.rfile.read(length)) if 0 < length <= MAX_BODY else {}
+            except ValueError:
+                form = {}
+            name, password = str(form.get("nom", "")).strip(), str(form.get("mdp", ""))
+            with app.accounts.connect() as db:
+                row = db.execute("SELECT id FROM users WHERE name = ?", (name,)).fetchone()
+            if not row:  # no account here: not a failed try
+                self.reply_json(200, {"ok": 0})
+                return
+            try:
+                user_id = app.accounts.login(name, password)
+            except account_tools.AccountError:
+                self.reply_json(200, {"ok": 0})
+                return
+            self.reply_json(200, {"ok": 1, "code": new_portal_code(user_id)})
+
+        def do_POST(self):
+            if self.refused_here():
+                return
+            if self.path == "/api/portail/verifier":
+                self.portal_check()
+                return
+            form = self.read_form()
+            if form is None:
+                return
+            if self.path == "/api/login":
+                self.login(form)
+            elif self.path == "/api/register":
+                self.create_account(form)
+            elif self.path == "/api/logout":
+                token = self.session_token()
+                if token:
+                    app.accounts.end_session(token)
+                self.reply_json(200, {}, session_cookie("", 0, secure_cookie))
+            elif self.path == "/api/stations":
+                self.add_station(form)
+            elif self.path == "/api/password":
+                self.change_password(form)
+            elif self.path == "/api/invite":
+                self.renew_own_code()
+            elif self.path == "/api/admin/code":
+                self.renew_user_code(form)
+            elif self.path == "/api/admin/invites":
+                if self.current_admin():
+                    app.set_invites_open(bool(form.get("open")))
+                    self.reply_json(200, {})
+            elif self.path == "/api/admin/limits":
+                if self.current_admin():
+                    try:
+                        app.save_limits(form)
+                    except ValueError as err:
+                        self.reply_json(422, {"error": str(err)})
+                    else:
+                        self.reply_json(200, {"limits": app.limits()})
+            elif self.path == "/api/admin/announcement":
+                if self.current_admin():
+                    text = str(form.get("text", "")).strip()
+                    hours = form.get("hours", 0)
+                    hours = hours if type(hours) is int else None  # neither 1.5 nor true
+                    if len(text) > MAX_ANNOUNCEMENT:
+                        self.reply_json(422, {"error": f"{MAX_ANNOUNCEMENT} caractères au plus"})
+                    elif hours not in ANNOUNCEMENT_HOURS:
+                        self.reply_json(422, {"error": "Durée inconnue"})
+                    else:
+                        app.set_announcement(text, hours)
+                        self.reply_json(200, {})
+            elif self.path == "/api/admin/role":
+                self.set_role(form)
+            elif self.path == "/api/admin/reset":
+                self.reset_user_password(form)
+            else:
+                self.reply_json(404, {"error": "Introuvable"})
+
+        def renew_own_code(self):
+            user = self.current_user()
+            if not user:
+                self.refuse_guest()
+            elif not (app.invites_open() or app.is_admin(user)):
+                self.reply_json(403, {"error": "Les invitations sont fermées pour le moment"})
+            else:
+                self.reply_json(200, {"code": app.renew_code(user["id"])})
+
+        def renew_user_code(self, form):
+            if not self.current_admin():
+                return
+            try:
+                user_id = int(form.get("id", 0))
+            except (ValueError, TypeError):
+                self.reply_json(400, {"error": "Requête refusée"})
+                return
+            if not any(user["id"] == user_id for user in app.accounts.list_users()):
+                self.reply_json(422, {"error": "Utilisateur inconnu"})
+                return
+            self.reply_json(200, {"code": app.renew_code(user_id)})
+
+        def change_password(self, form):
+            user = self.current_user()
+            if not user:
+                self.refuse_guest()
+                return
+            try:
+                app.accounts.change_password(
+                    user, str(form.get("current", "")), str(form.get("new", "")), self.session_token(),
+                )
+            except account_tools.AccountError as err:
+                time.sleep(AUTH_DELAY)
+                self.reply_json(422, {"error": str(err)})
+            else:
+                self.reply_json(200, {})
+
+        def set_role(self, form):
+            admin = self.current_admin()
+            if not admin:
+                return
+            if not app.is_owner(admin):
+                self.reply_json(403, {"error": "Seul le propriétaire du site nomme les administrateurs"})
+                return
+            try:
+                app.accounts.set_admin(int(form.get("id", 0)), bool(form.get("admin")))
+            except (ValueError, TypeError):
+                self.reply_json(400, {"error": "Requête refusée"})
+            except account_tools.AccountError as err:
+                self.reply_json(422, {"error": str(err)})
+            else:
+                self.reply_json(200, {})
+
+        def reset_user_password(self, form):
+            admin = self.current_admin()
+            if not admin:
+                return
+            try:
+                user_id = int(form.get("id", 0))
+                if user_id == admin["id"]:
+                    raise account_tools.AccountError("Changez votre propre mot de passe dans « Mon mot de passe »")
+                if not self.may_manage(admin, user_id):
+                    raise account_tools.AccountError("Seul le propriétaire du site peut gérer un administrateur")
+                self.reply_json(200, {"password": app.accounts.temporary_password(user_id)})
+            except (ValueError, TypeError):
+                self.reply_json(400, {"error": "Requête refusée"})
+            except account_tools.AccountError as err:
+                self.reply_json(422, {"error": str(err)})
+
+        def add_station(self, form):
+            user = self.current_user()
+            if not user:
+                self.refuse_guest()
+                return
+            try:
+                station = app.add_station(
+                    user["id"], str(form.get("link", "")), str(form.get("name", "")), str(form.get("place", "")),
+                )
+            except StationError as err:
+                self.reply_json(422, {"error": str(err)})
+            else:
+                self.reply_json(201, station)
+
+        def do_PATCH(self):
+            if self.refused_here():
+                return
+            form = self.read_form()
+            if form is None:
+                return
+            user = self.current_user()
+            if not user:
+                self.refuse_guest()
+            elif self.path == "/api/settings":
+                try:
+                    app.save_settings(user["id"], form.get("settings"))
+                except ValueError as err:
+                    self.reply_json(422, {"error": str(err)})
+                else:
+                    self.reply_json(200, {})
+            elif self.path == "/api/stations/order":
+                try:
+                    app.reorder_stations(user["id"], [str(item) for item in form.get("ids", [])])
+                except (StationError, TypeError) as err:
+                    self.reply_json(422, {"error": str(err)})
+                else:
+                    self.reply_json(200, {})
+            elif self.path != "/api/stations":
+                self.reply_json(404, {"error": "Introuvable"})
+            else:
+                try:
+                    app.rename_station(user["id"], str(form.get("id", "")), str(form.get("name", "")))
+                except StationError as err:
+                    self.reply_json(422, {"error": str(err)})
+                else:
+                    self.reply_json(200, {})
+
+        def delete_user(self, target):
+            admin = self.current_admin()
+            if not admin:
+                return
+            if not target.isdigit() or int(target) == admin["id"] or not self.may_manage(admin, int(target)):
+                self.reply_json(422, {"error": "Ce compte ne peut pas être supprimé"})
+                return
+            app.delete_user(int(target))
+            self.reply_json(200, {})
+
+        def do_DELETE(self):
+            if self.refused_here():
+                return
+            url = urllib.parse.urlsplit(self.path)
+            station_id = urllib.parse.parse_qs(url.query).get("id", [""])[0]
+            if url.path == "/api/admin/users":
+                self.delete_user(station_id)
+                return
+            if url.path == "/api/admin/stations":
+                if self.current_admin():
+                    try:
+                        app.forget_station(station_id)
+                    except StationError as err:
+                        self.reply_json(422, {"error": str(err)})
+                    else:
+                        self.reply_json(200, {})
+                return
+            user = self.current_user()
+            if not user:
+                self.refuse_guest()
+            elif url.path != "/api/stations" or not station_id:
+                self.reply_json(400, {"error": "Requête refusée"})
+            else:
+                app.remove_station(user["id"], station_id)
+                self.reply_json(200, {})
+
     return Handler
 
 
@@ -1074,27 +2018,45 @@ def load_config():
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Dashboard météo local")
-    parser.add_argument("--demo", action="store_true", help="données simulées, sans compte Netatmo")
+    invite_code = os.environ.get("METEO_INVITE_CODE", "")
+    parser = argparse.ArgumentParser(description="Dashboard météo Netatmo")
+    parser.add_argument(
+        "--mode", choices=("local", "en-ligne"), default="en-ligne" if invite_code else "local",
+        help="local : une personne, sans compte (par défaut) ; en-ligne : comptes et invitations "
+             "(par défaut quand METEO_INVITE_CODE existe)",
+    )
+    parser.add_argument("--demo", action="store_true", help="données simulées, sans compte Netatmo (mode local)")
     parser.add_argument("--host", default="127.0.0.1", help="adresse d'écoute (0.0.0.0 dans un conteneur)")
     parser.add_argument("--port", type=int)
-    parser.add_argument("--no-browser", action="store_true")
+    parser.add_argument("--no-browser", action="store_true", help="mode local : ne pas ouvrir le navigateur")
     args = parser.parse_args()
-
-    password = os.environ.get("METEO_PASSWORD", "")
-    if args.host not in LOCAL_HOSTS and not password:
-        parser.error("METEO_PASSWORD est obligatoire quand le dashboard est accessible depuis le réseau")
+    local = args.mode == "local" or args.demo
 
     DATA.mkdir(exist_ok=True)
     config = load_config()
-    port = args.port or int(config.get("port", 8765))
-    app = Dashboard(config, args.demo)
+    if local:
+        password = os.environ.get("METEO_PASSWORD", "")
+        if args.host not in LOCAL_HOSTS and not password:
+            parser.error("METEO_PASSWORD est obligatoire quand le dashboard est accessible depuis le réseau")
+        port = args.port or int(config.get("port", 8765))
+        app = Dashboard(config, local=True, demo=args.demo)
+        handler = make_handler(app, password=password, port=port)
+    else:
+        if len(invite_code) < 8:
+            parser.error("METEO_INVITE_CODE est obligatoire et doit faire au moins 8 caractères")
+        secure_cookie = os.environ.get("METEO_INSECURE_COOKIE") != "1"  # only for tests without HTTPS
+        port = args.port or 8765
+        app = Dashboard(config)
+        handler = make_handler(app, invite_code, secure_cookie)
     threading.Thread(target=app.collect_forever, daemon=True).start()
-    server = ThreadingHTTPServer((args.host, port), make_handler(app, port, password))
-    address = f"http://localhost:{port}/"
-    print(f"Dashboard : {address}  (Ctrl+C pour quitter)", flush=True)
-    if not args.no_browser:
-        webbrowser.open(address)
+    server = ThreadingHTTPServer((args.host, port), handler)
+    if local:
+        address = f"http://localhost:{port}/"
+        print(f"Dashboard : {address}  (Ctrl+C pour quitter)", flush=True)
+        if not args.no_browser:
+            webbrowser.open(address)
+    else:
+        print(f"Dashboard en ligne sur le port {port}", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

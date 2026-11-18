@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+PROGRAM_FOLDER = HERE.parent  # one program for the PC and the VPS
 REMOTE = "/opt/meteo-perso/app"
 CONTAINER = "meteo-perso"
 PROGRAM = [
@@ -18,7 +19,7 @@ PROGRAM = [
 def commands(target):
     return [
         ["ssh", "-t", target, f'sudo chown -R "$USER" {REMOTE}'],
-        ["scp", "-r", *(str(HERE / name) for name in PROGRAM), f"{target}:{REMOTE}/"],
+        ["scp", "-r", *(str(PROGRAM_FOLDER / name) for name in PROGRAM), f"{target}:{REMOTE}/"],
         ["ssh", "-t", target, f"sudo chown -R 1000:1000 {REMOTE} && sudo docker restart {CONTAINER}"],
     ]
 

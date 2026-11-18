@@ -3,23 +3,39 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Météo perso</title>
-  <script src="/theme.js"></script>
-  <link rel="stylesheet" href="/style.css">
+  <title>Météo</title>
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#2878e1">
+  <link rel="icon" href="/icone-192.png">
+  <link rel="apple-touch-icon" href="/icone-192.png">
+  <script src="/settings.js"></script>
+  <script src="/theme.js?v=2"></script>
+  <link rel="stylesheet" href="/style.css?v=6">
 </head>
 <body>
   <main>
     <header class="top">
-      <h1>Météo perso</h1>
+      <h1 class="brand"><img src="/icone-192.png" alt="" width="30" height="30"><span class="brand-name">Météo</span></h1>
       <p id="clock" class="clock"></p>
       <p id="sky-line" class="sky-line" hidden></p>
       <p id="status" class="muted" aria-live="polite">Chargement…</p>
       <div class="account">
-        <button id="add-open" class="add-open" type="button">+ Ajouter une station</button>
-        <a href="/guide">Guide</a>
+        <button id="add-open" class="add-open" type="button" title="Ajouter une station" aria-label="Ajouter une station">+<span class="lbl-short"> Station</span><span class="lbl-long"> Ajouter une station</span></button>
+        <button id="install-app" class="add-open" type="button" title="Installer l'appli" aria-label="Installer l'appli" hidden>⬇<span class="lbl-long"> Installer l'appli</span></button>
         <div class="theme-menu">
           <button id="theme-open" type="button" aria-expanded="false" aria-label="Mode clair ou sombre" title="Mode clair ou sombre">◐</button>
           <div id="theme-list" class="card theme-list" hidden></div>
+        </div>
+        <a href="/guide" class="local-only">Guide</a>
+        <div class="user-menu online-only">
+          <button id="user-open" type="button" aria-expanded="false"></button>
+          <div id="user-list" class="card theme-list" hidden>
+            <a href="/guide">Guide</a>
+            <button id="invite-open" type="button" hidden>Inviter quelqu'un</button>
+            <button id="password-open" type="button">Mon mot de passe</button>
+            <button id="admin-open" type="button" hidden>Administration</button>
+            <button id="logout" type="button">Se déconnecter</button>
+          </div>
         </div>
       </div>
     </header>
@@ -80,6 +96,31 @@
         <p id="add-message" class="add-message" role="status"></p>
       </form>
     </details>
+    <details id="invite-panel" class="card add-station online-only">
+      <summary>Inviter quelqu'un</summary>
+      <div id="invite-body">
+        <p class="invite">
+          Votre code : <code id="my-code"></code>
+          <button id="invite-copy" class="invite-copy" type="button">Copier le lien d'invitation</button>
+          <button id="invite-renew" class="invite-copy" type="button">Nouveau code</button>
+        </p>
+        <p class="muted">Un code ne sert qu'une fois : un nouveau le remplace dès qu'une personne s'inscrit avec.</p>
+      </div>
+      <p id="invite-message" class="add-message" role="status"></p>
+    </details>
+    <details id="password-panel" class="card add-station online-only">
+      <summary>Mon mot de passe</summary>
+      <form id="password-form">
+        <label>Mot de passe actuel
+          <input name="current" type="password" required autocomplete="current-password" maxlength="200">
+        </label>
+        <label>Nouveau mot de passe (10 caractères minimum)
+          <input name="new" type="password" required minlength="10" autocomplete="new-password" maxlength="200">
+        </label>
+        <button type="submit">Changer</button>
+        <p id="password-message" class="add-message" role="status"></p>
+      </form>
+    </details>
     <section id="stations" class="stations" aria-label="Dernières mesures"></section>
     <details id="forecast-panel" class="card options" hidden>
       <summary id="forecast-title">Prévisions</summary>
@@ -103,13 +144,12 @@
       </div>
     </details>
     <p id="credits" class="muted credits" hidden>
-      Ciel, prévisions et vent estimé : modèles météo, pas des mesures de la station. Données
-      <a href="https://open-meteo.com/" target="_blank" rel="noopener noreferrer">Open-Meteo.com</a>
-      (<a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a>).
-      Alertes : <a href="https://meteoalarm.org/" target="_blank" rel="noopener noreferrer">MeteoAlarm</a>, EUMETNET (CC BY 4.0).
+      Ciel, prévisions et vent estimé : modèles météo, pas des mesures de la station.
+      <a href="/guide">Sources dans le guide</a>.
     </p>
   </main>
   <div id="screen" class="screen" hidden></div>
-  <script src="/app.js"></script>
+  <script src="/app.js?v=4"></script>
+  <script src="/appli.js?v=2"></script>
 </body>
 </html>

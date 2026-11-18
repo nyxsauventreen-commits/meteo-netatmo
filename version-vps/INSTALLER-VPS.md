@@ -1,8 +1,9 @@
-# Installer la version en ligne sur un serveur
+# Installer le mode en ligne sur un serveur
 
-Cette version est séparée de celle du PC, qui reste utilisable en même temps. Elle tourne
-dans Docker avec l'image Python officielle et s'ouvre en HTTPS sur votre domaine. La collecte
-continue quand le PC est éteint.
+Le serveur fait tourner le même programme que le PC, en mode en ligne : il démarre ainsi dès que
+`METEO_INVITE_CODE` est défini. Le PC reste utilisable en même temps, en mode local. Le site
+tourne dans Docker avec l'image Python officielle et s'ouvre en HTTPS sur votre domaine. La
+collecte continue quand le PC est éteint.
 
 Dans ce guide :
 
@@ -27,11 +28,12 @@ Le site doit être servi en HTTPS : le cookie de session est marqué `Secure`.
 Les écrans de Cloudflare et de Netatmo peuvent changer : les noms de menus sont donnés à titre
 indicatif.
 
-## 1. Préparer la version locale
+## 1. Préparer le PC
 
-Le programme de préparation part de la version locale. Il envoie au serveur ses stations, de
-`config.json`, et ses mesures, de `data/meteo.db`. Installez-la donc d'abord et lancez-la au
-moins une fois, avec vos stations : voir le [README](../README.md).
+Le programme de préparation part du PC. Il envoie au serveur vos stations et vos mesures, de
+`data/meteo.db`. Le premier compte créé sur le site reçoit ces stations. Installez donc
+d'abord le programme sur le PC et lancez-le au moins une fois, avec vos stations : voir le
+[README](../README.md).
 
 ## 2. Mettre le domaine sur Cloudflare
 
@@ -58,7 +60,7 @@ moins une fois, avec vos stations : voir le [README](../README.md).
 ## 4. Créer une deuxième application Netatmo
 
 Le PC et le serveur ne peuvent pas partager leurs jetons Netatmo. Les jetons changent à chaque
-renouvellement, donc les deux versions se déconnecteraient l'une l'autre.
+renouvellement, donc le PC et le serveur se déconnecteraient l'un l'autre.
 
 1. Sur [dev.netatmo.com](https://dev.netatmo.com), dans « My Apps », créez une deuxième
    application, par exemple « Meteo serveur ».
@@ -67,7 +69,7 @@ renouvellement, donc les deux versions se déconnecteraient l'une l'autre.
 
 ## 5. Lancer le programme de préparation
 
-Dans un terminal, depuis le dossier du projet. La version locale peut rester ouverte.
+Dans un terminal, depuis le dossier du projet. Le programme du PC peut rester ouvert.
 
 ```bash
 python version-vps/preparer_vps.py
