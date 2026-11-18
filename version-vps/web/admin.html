@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Administration · Météo</title>
+  <script src="/settings.js"></script>
+  <script src="/theme.js?v=2"></script>
+  <link rel="stylesheet" href="/style.css?v=6">
+</head>
+<body>
+  <main class="admin-page">
+    <header class="admin-header">
+      <h1>Administration</h1>
+      <a href="/">← Retour au tableau de bord</a>
+    </header>
+
+    <nav class="card toolbar admin-nav" aria-label="Parties de l'administration">
+      <div id="admin-tabs" class="segmented tabs" role="group">
+        <button type="button" data-tab="apercu">Aperçu</button>
+        <button type="button" data-tab="utilisateurs">Utilisateurs</button>
+        <button type="button" data-tab="stations">Stations</button>
+        <button type="button" data-tab="reglages">Réglages</button>
+        <button id="journal-tab" type="button" data-tab="journal">Journal</button>
+      </div>
+    </nav>
+    <p id="admin-message" class="admin-toast" role="status"></p>
+
+    <div class="admin-group" data-group="apercu">
+      <section class="card admin-section">
+        <h2>État du serveur</h2>
+        <p class="admin-lead">Mis à jour toutes les minutes.</p>
+        <div id="server" class="stats-grid"></div>
+      </section>
+      <section class="card admin-section">
+        <h2>Options utilisées</h2>
+        <p class="admin-lead">Combien de personnes affichent chaque option. Celles qui n'ont rien changé comptent avec les réglages de départ.</p>
+        <div id="usage" class="usage"></div>
+      </section>
+      <section class="card admin-section">
+        <h2>Sauvegarde</h2>
+        <p class="admin-lead">Un seul fichier avec les mesures, les comptes et les réglages, pris sans arrêter le site. Les mots de passe y sont protégés, mais gardez-le pour vous. La connexion Netatmo n'y est pas ; la notice d'installation explique comment le remettre en place.</p>
+        <a class="backup-link" href="/api/admin/backup">Télécharger une sauvegarde</a>
+      </section>
+    </div>
+
+    <div class="admin-group" data-group="utilisateurs" hidden>
+      <section class="card admin-section">
+        <h2>Invitations</h2>
+        <p class="admin-lead">Chaque personne a son code, valable une seule fois. Décochez pour que seuls les codes des administrateurs marchent.</p>
+        <label class="check"><input id="invites-open" type="checkbox"> Tout le monde peut inviter</label>
+      </section>
+      <section class="card admin-section">
+        <h2>Comptes</h2>
+        <p class="admin-lead">« Nouveau code » remplace le code d'invitation d'une personne : l'ancien ne marche plus.</p>
+        <div id="admin-users" class="user-list"></div>
+      </section>
+    </div>
+
+    <div class="admin-group" data-group="stations" hidden>
+      <section class="card admin-section">
+        <h2>Stations suivies</h2>
+        <p class="admin-lead">Les stations collectées, avec le nombre de personnes qui les suivent.</p>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr><th class="left">Station</th><th>Suivie par</th><th class="left">Dernière mesure</th><th class="left">État</th></tr>
+            </thead>
+            <tbody id="admin-stations"></tbody>
+          </table>
+        </div>
+      </section>
+      <section id="abandoned-section" class="card admin-section" hidden>
+        <h2>Stations abandonnées</h2>
+        <p class="admin-lead">Plus personne ne les suit : elles ne sont plus collectées, mais leurs mesures restent stockées. Si quelqu'un les ajoute à nouveau, leur historique sera repris chez Netatmo.</p>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr><th class="left">Station</th><th>Mesures</th><th class="left">Dernière mesure</th><th></th></tr>
+            </thead>
+            <tbody id="admin-abandoned"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <div class="admin-group" data-group="reglages" hidden>
+      <section class="card admin-section">
+        <h2>Limites</h2>
+        <p class="admin-lead">Elles protègent la collecte : Netatmo limite le nombre de requêtes par heure. Baisser une limite ne retire rien, elle bloque seulement les nouveaux ajouts.</p>
+        <form id="limits-form" class="admin-settings">
+          <div class="admin-fields">
+            <label class="admin-field">Stations au total
+              <input name="total_stations" type="number" min="1" max="100" required>
+              <small>Toutes les personnes confondues, de 1 à 100.</small>
+            </label>
+            <label class="admin-field">Stations par personne
+              <input name="user_stations" type="number" min="1" max="8" required>
+              <small>8 au plus : une couleur par station.</small>
+            </label>
+            <label class="admin-field">Minutes entre deux collectes
+              <input name="poll_minutes" type="number" min="5" max="60" required>
+              <small>De 5 à 60. Plus court, plus de requêtes.</small>
+            </label>
+            <div class="admin-field">
+              <span>Stations voisines</span>
+              <label class="check"><input name="neighbours_allowed" type="checkbox"> Option autorisée</label>
+              <small>4 requêtes par station et par heure quand quelqu'un l'utilise.</small>
+            </div>
+          </div>
+          <p id="limits-help" class="admin-estimate"></p>
+          <button type="submit">Enregistrer les limites</button>
+        </form>
+      </section>
+      <section class="card admin-section">
+        <h2>Message pour tous</h2>
+        <p class="admin-lead">Affiché en haut de la page de chacun, par exemple pour prévenir d'une coupure. Il disparaît tout seul au bout de la durée choisie.</p>
+        <form id="announcement-form" class="admin-settings">
+          <textarea name="text" maxlength="300" rows="2" aria-label="Message pour tous"></textarea>
+          <label class="admin-inline">Affiché pendant
+            <select name="hours">
+              <option value="1">1 heure</option>
+              <option value="6">6 heures</option>
+              <option value="24" selected>24 heures</option>
+              <option value="72">3 jours</option>
+              <option value="168">7 jours</option>
+              <option value="0">Jusqu'à ce que je l'enlève</option>
+            </select>
+          </label>
+          <p id="announcement-state" class="admin-estimate"></p>
+          <div class="admin-buttons">
+            <button type="submit">Publier</button>
+            <button id="announcement-remove" class="secondary" type="button" hidden>Retirer le message</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
+    <div class="admin-group" data-group="journal" hidden>
+      <section class="card admin-section">
+        <h2>Journal des erreurs de collecte</h2>
+        <p class="admin-lead">Chaque nouveau problème, puis son retour à la normale, du plus récent au plus ancien.</p>
+        <p id="log-empty" class="muted">Aucune erreur enregistrée.</p>
+        <div id="log-table" class="table-scroll">
+          <table>
+            <thead>
+              <tr><th class="left">Quand</th><th class="left">Type</th><th class="left">Station</th><th class="left">Message</th></tr>
+            </thead>
+            <tbody id="admin-log"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </main>
+  <script src="/admin.js?v=3"></script>
+</body>
+</html>

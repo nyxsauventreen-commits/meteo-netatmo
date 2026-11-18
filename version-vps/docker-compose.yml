@@ -1,0 +1,31 @@
+# Stack Portainer pour Météo perso en ligne : voir INSTALLER-VPS.md.
+# Rien à construire : l'image Python officielle lit le programme dans /opt/meteo-perso/app.
+# Aucun port n'est ouvert : le site passe par le tunnel, les ports 80 et 443 restent libres.
+services:
+  meteo:
+    image: python:3.13-slim
+    container_name: meteo-perso
+    restart: unless-stopped
+    user: "1000:1000"
+    working_dir: /app
+    command: ["python", "-u", "app.py", "--host", "0.0.0.0", "--port", "8765"]
+    environment:
+      METEO_DATA: /data
+      METEO_INVITE_CODE: ${METEO_INVITE_CODE}
+      PYTHONDONTWRITEBYTECODE: "1"
+      TZ: Europe/Paris
+    mem_limit: 256m
+    volumes:
+      - /opt/meteo-perso/app:/app:ro
+      - /opt/meteo-perso/data:/data
+
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: meteo-tunnel
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "run"]
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN}
+    mem_limit: 128m
+    depends_on:
+      - meteo

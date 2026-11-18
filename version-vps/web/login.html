@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Météo</title>
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#0b1026">
+  <link rel="icon" href="/icone-192.png">
+  <link rel="apple-touch-icon" href="/icone-192.png">
+  <style>
+    /* Connexion de la météo : un ciel animé qui suit l'heure (nuit étoilée, aube, jour nuageux, coucher de soleil) */
+    :root { --texte: #f4f8ff; --gris: rgba(232, 240, 255, .72); --bord: rgba(255, 255, 255, .22); --bleu: #3fa0ff; --err: #ffb4b4; color-scheme: dark; }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body { margin: 0; background: #0b1026; color: var(--texte); overflow-x: hidden; font: 15px/1.5 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; }
+    [hidden] { display: none !important; }
+    #ciel { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+    .page { position: relative; z-index: 1; min-height: 100%; display: grid; place-items: center; padding: 24px 16px; }
+    .carte {
+      width: min(390px, 100%); padding: 28px 26px 22px; border-radius: 24px;
+      background: rgba(12, 22, 44, .42); border: 1px solid var(--bord);
+      backdrop-filter: blur(16px) saturate(150%); -webkit-backdrop-filter: blur(16px) saturate(150%);
+      box-shadow: 0 24px 70px rgba(0, 0, 0, .35);
+    }
+    .tete { display: flex; flex-direction: column; align-items: center; text-align: center; margin-bottom: 18px; }
+    .tete img { width: 66px; height: 66px; border-radius: 18px; box-shadow: 0 10px 28px rgba(0, 0, 0, .3); animation: flotte 6s ease-in-out infinite; }
+    @keyframes flotte { 50% { transform: translateY(-5px); } }
+    .tete .nom { margin-top: 12px; font-size: 27px; font-weight: 750; letter-spacing: -.4px; text-shadow: 0 2px 14px rgba(0, 0, 0, .25); }
+    .tete .salut { color: var(--gris); font-size: 13.5px; }
+    h2 { font-size: 17px; font-weight: 650; margin: 0 0 2px; text-align: center; }
+    label { display: block; font-size: 12.5px; font-weight: 600; color: var(--gris); margin: 14px 0 0; }
+    input {
+      display: block; width: 100%; height: 44px; margin-top: 6px; padding: 0 14px; border-radius: 12px;
+      border: 1px solid var(--bord); background: rgba(255, 255, 255, .1); color: var(--texte); font: inherit; outline: none;
+      transition: border-color .2s, box-shadow .2s, background .2s;
+    }
+    input:focus { border-color: #8cc8ff; background: rgba(255, 255, 255, .16); box-shadow: 0 0 0 3px rgba(63, 160, 255, .3); }
+    input:-webkit-autofill { -webkit-text-fill-color: var(--texte); box-shadow: 0 0 0 40px #1c2c4c inset; caret-color: var(--texte); }
+    #login-submit {
+      width: 100%; height: 46px; margin-top: 22px; border: 0; border-radius: 12px; cursor: pointer;
+      background: linear-gradient(90deg, #3fa0ff, #2b6fe0); color: #fff; font: inherit; font-weight: 700; font-size: 15px;
+      box-shadow: 0 10px 26px rgba(43, 111, 224, .4); transition: filter .2s, transform .12s;
+    }
+    #login-submit:hover { filter: brightness(1.1); }
+    #login-submit:active { transform: scale(.985); }
+    #login-submit:disabled { opacity: .7; cursor: progress; }
+    .login-message { min-height: 1.2em; margin: 12px 0 0; text-align: center; font-size: 13.5px; color: var(--err); }
+    .login-switch { display: block; margin: 12px auto 0; background: none; border: 0; color: #cfe6ff; font: inherit; font-size: 13.5px; font-weight: 600; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+    .login-switch:hover { color: #fff; }
+    @media (max-width: 420px) { .carte { padding: 24px 18px 20px; } }
+    @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+  </style>
+</head>
+<body>
+  <canvas id="ciel" aria-hidden="true"></canvas>
+  <main class="page">
+    <form id="login-form" class="carte">
+      <div class="tete">
+        <img src="/icone-192.png" alt="">
+        <div class="nom">Météo</div>
+        <div class="salut" id="salut"></div>
+      </div>
+      <h2 id="login-title">Connexion</h2>
+      <label>Nom
+        <input name="name" required autocomplete="username" maxlength="30">
+      </label>
+      <label>Mot de passe
+        <input name="password" type="password" required autocomplete="current-password" maxlength="200">
+      </label>
+      <label id="code-field" hidden>Code d'invitation
+        <input name="code" autocomplete="off" maxlength="200">
+      </label>
+      <button id="login-submit" type="submit">Se connecter</button>
+      <p id="login-message" class="login-message" role="alert"></p>
+      <button id="login-switch" class="login-switch" type="button">Créer un compte</button>
+    </form>
+  </main>
+  <script src="/login.js"></script>
+  <script src="/ciel.js?v=1"></script>
+</body>
+</html>
