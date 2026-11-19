@@ -21,6 +21,7 @@
         <button type="button" data-tab="utilisateurs">Utilisateurs</button>
         <button type="button" data-tab="stations">Stations</button>
         <button type="button" data-tab="reglages">Réglages</button>
+        <button type="button" data-tab="alertes">Alertes</button>
         <button id="journal-tab" type="button" data-tab="journal">Journal</button>
       </div>
     </nav>
@@ -136,6 +137,52 @@
       </section>
     </div>
 
+    <div class="admin-group" data-group="alertes" hidden>
+      <section class="card admin-section">
+        <h2>Alertes en service</h2>
+        <p class="admin-lead">Chacun choisit ses alertes et ses stations dans « Mes notifications ». Les notifications du site marchent sans réglage ; les e-mails demandent la boîte d'envoi ci-dessous.</p>
+        <div id="notify-figures" class="stats-grid"></div>
+      </section>
+      <section class="card admin-section">
+        <h2>Boîte d'envoi des e-mails</h2>
+        <p id="mailbox-state" class="admin-estimate"></p>
+        <ol class="admin-lead mailbox-steps">
+          <li>Connectez-vous à Google avec la boîte Gmail créée pour le site.</li>
+          <li>Activez la <a href="https://myaccount.google.com/signinoptions/twosv" target="_blank" rel="noopener noreferrer">validation en deux étapes ↗</a> si ce n'est pas déjà fait.</li>
+          <li>Ouvrez les <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener noreferrer">mots de passe des applications ↗</a>, tapez un nom, par exemple « Météo », puis <strong>Créer</strong>. Google affiche 16 lettres : copiez-les.</li>
+          <li>Collez ci-dessous l'adresse Gmail et ces 16 lettres. Le site vérifie la connexion avant d'enregistrer, et ne réaffiche jamais ce mot de passe.</li>
+        </ol>
+        <form id="mailbox-form" class="admin-settings">
+          <div class="admin-fields">
+            <label class="admin-field">Adresse Gmail
+              <input name="user" type="email" maxlength="254" autocomplete="off" required>
+            </label>
+            <label class="admin-field">Mot de passe d'application (16 lettres)
+              <input name="password" type="password" maxlength="64" autocomplete="new-password" required>
+            </label>
+          </div>
+          <div class="admin-buttons">
+            <button type="submit">Vérifier et enregistrer</button>
+            <button id="mailbox-remove" class="secondary" type="button" hidden>Retirer cette boîte</button>
+          </div>
+        </form>
+      </section>
+      <section class="card admin-section">
+        <h2>Tester l'envoi</h2>
+        <p class="admin-lead">Envoie un e-mail depuis la boîte du site, pour vérifier que tout marche. Un test par minute au plus.</p>
+        <form id="mailbox-test-form" class="admin-settings">
+          <div class="admin-fields">
+            <label class="admin-field">Envoyer à
+              <input name="address" type="email" maxlength="254" autocomplete="email" required>
+            </label>
+          </div>
+          <div class="admin-buttons">
+            <button type="submit">Envoyer un e-mail de test</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
     <div class="admin-group" data-group="journal" hidden>
       <section class="card admin-section">
         <h2>Journal des erreurs de collecte</h2>
@@ -152,6 +199,6 @@
       </section>
     </div>
   </main>
-  <script src="/admin.js?v=3"></script>
+  <script src="/admin.js?v=4"></script>
 </body>
 </html>

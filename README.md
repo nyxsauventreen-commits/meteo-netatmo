@@ -41,7 +41,7 @@ L'interface est en français.
 
 ## Un programme, deux modes
 
-Le même programme (version 2.3) tourne sur un PC ou sur un serveur. Le mode se choisit au
+Le même programme (version 2.4) tourne sur un PC ou sur un serveur. Le mode se choisit au
 lancement.
 
 | | Mode local (par défaut) | Mode en ligne |

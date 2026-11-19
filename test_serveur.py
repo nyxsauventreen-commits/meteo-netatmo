@@ -343,11 +343,18 @@ class Web(ServerCase):
         admin, user = self.sign_up("Admin"), self.sign_up("Sam")
         form = {"user": "site@example.org", "password": "abcdefghijklmnop"}
         self.assertEqual(self.call("POST", "/api/mailbox", form, user)[0].status, 403)
-        self.assertFalse(json.loads(self.call("GET", "/api/notifications", cookie=user)[1])["mailbox"]["may_change"])
+        for cookie in (user, admin):  # online, the mailbox is set in the administration
+            self.assertFalse(json.loads(self.call("GET", "/api/notifications", cookie=cookie)[1])["mailbox"]["may_change"])
         with mock.patch("smtplib.SMTP_SSL"):
             response, content = self.call("POST", "/api/mailbox", form, admin)
         self.assertEqual((response.status, json.loads(content)), (200, {"address": "site@example.org"}))
         self.assertTrue(json.loads(self.call("GET", "/api/notifications", cookie=user)[1])["email_available"])
+        self.assertEqual(self.call("POST", "/api/mailbox/test", {"address": "sam@example.fr"}, user)[0].status, 403)
+        with mock.patch("smtplib.SMTP_SSL"):
+            self.assertEqual(self.call("POST", "/api/mailbox/test", {"address": "sam@example.fr"}, admin)[0].status, 200)
+        overview = json.loads(self.call("GET", "/api/admin/overview", cookie=admin)[1])
+        self.assertEqual(overview["mailbox"], {"address": "site@example.org", "from_page": True})
+        self.assertEqual(overview["notify"], {"people": 0, "email": 0, "devices": 0})
 
     def test_notification_problems_stay_in_the_admin_log(self):
         cookie = self.sign_up("Sam")

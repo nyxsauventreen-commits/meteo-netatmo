@@ -982,27 +982,77 @@ body.screen-shown { overflow: hidden; }
 /* One program, two modes: the server marks the pages of the local mode (no account). */
 .mode-local .online-only { display: none !important; }
 html:not(.mode-local) .local-only { display: none !important; }
-/* Notifications panel */
+/* Notifications panel: blocks numbered in the order to fill them, saved on each change. */
 #notify-panel:not([open]) { display: none; }
-.notify-form fieldset { display: grid; gap: 8px; min-width: 0; margin: 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; }
-.notify-form legend { padding: 0 4px; color: var(--ink); font-size: 14px; font-weight: 600; }
-.add-station .check { display: flex; gap: 8px; align-items: center; color: var(--ink); font-size: 14px; }
-.add-station .check input { width: auto; min-height: 0; }
-.notify-help { font-size: 13px; }
-.notify-help code { overflow-wrap: anywhere; }
-.notify-address { max-width: 360px; }
-.notify-events { display: grid; gap: 6px; }
-.notify-event { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 10px; align-items: center; min-height: 34px; }
-.notify-event .threshold { justify-content: flex-end; }
-.notify-event .threshold { display: flex; gap: 6px; align-items: center; color: var(--ink-2); font-size: 13px; }
-.add-station .notify-event .threshold input { width: 80px; min-height: 32px; padding: 4px 8px; }
-.notify-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
-.add-station .notify-buttons button + button { background: transparent; color: var(--ink); }
-.link-button { padding: 0; border: 0; background: none; color: var(--ink-2); font: inherit; text-decoration: underline; cursor: pointer; }.topic-line { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.topic-line code { padding: 4px 8px; border-radius: 6px; background: var(--hover); overflow-wrap: anywhere; }
-.notify-address[hidden] { display: none; }.device-line { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.notify-panel { margin-bottom: 16px; padding: 12px 16px; }
+.notify-panel summary { font-weight: 600; cursor: pointer; }
+.notify-body { display: grid; gap: 12px; max-width: 720px; margin-top: 12px; }
+.notify-block { display: grid; gap: 8px; min-width: 0; padding: 12px 14px; border: 1px solid var(--border); border-radius: 12px; }
+.notify-block h3 { margin: 0; font-size: 14.5px; font-weight: 650; }
+.notify-block h3 .muted { font-weight: 400; }
+.notify-help { margin: 0; font-size: 13px; }
+.device-line { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; justify-content: space-between; }
 .push-state { color: var(--ink); font-size: 14px; }
-.mailbox-form { margin-top: 12px; }
-.mailbox-form[hidden], .device-line button[hidden] { display: none; }
+.notify-button {
+  min-height: 38px;
+  padding: 6px 16px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.notify-button.primary { border-color: var(--ink); background: var(--ink); color: var(--surface); }
+.notify-button:disabled { opacity: 0.6; cursor: progress; }
+.notify-button[hidden] { display: none; }
+.notify-chips button { min-height: 36px; padding: 4px 14px; }
+.notify-events { display: grid; gap: 4px; }
+.notify-event {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 10px;
+  align-items: center;
+  min-height: 44px;
+  padding: 2px 8px;
+  border-radius: 9px;
+}
+.notify-event:hover { background: var(--hover); }
+.notify-event .check { display: flex; gap: 10px; align-items: center; min-height: 40px; color: var(--ink); font-size: 14.5px; cursor: pointer; }
+.notify-event .check input, .notify-block .check input { width: 20px; height: 20px; margin: 0; accent-color: var(--ink); }
+/* Three columns, the same on every row: word on the right, box, unit on the left. */
+.notify-event .threshold { display: grid; grid-template-columns: 3.4em 76px 3.4em; gap: 6px; align-items: center; color: var(--ink-2); font-size: 13px; }
+.threshold-word { text-align: right; }
+.threshold-unit { text-align: left; }
+.notify-event .threshold input, .notify-address input {
+  min-height: 36px;
+  padding: 4px 8px;
+  border: 1px solid var(--axis);
+  border-radius: 8px;
+  background: var(--page);
+  color: var(--ink);
+  font: inherit;
+}
+.notify-event .threshold input { width: 76px; text-align: right; }
+.notify-event.off .threshold { opacity: 0.45; }
+.notify-block .check { display: flex; gap: 10px; align-items: center; min-height: 40px; color: var(--ink); font-size: 14.5px; }
+.notify-address { display: grid; gap: 4px; max-width: 380px; color: var(--ink-2); font-size: 13px; }
+.notify-address[hidden] { display: none; }
+.notify-address input { width: 100%; }
+.notify-footer { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; justify-content: space-between; }
+.notify-message { flex: 1 1 200px; min-height: 20px; color: var(--ink-2); font-size: 13.5px; }
+.notify-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.mailbox-form[hidden] { display: none; }
 .mailbox-steps { margin: 0; padding-left: 20px; font-size: 13px; }
 .mailbox-steps li { margin: 3px 0; }
+
+/* Phone: the threshold goes under its event, the buttons take the whole width. */
+@media (max-width: 520px) {
+  .notify-panel { padding: 10px 12px; }
+  .notify-block { padding: 10px 12px; }
+  .notify-event { padding: 2px 4px; }
+  .notify-event .threshold { grid-template-columns: 3em 64px 3em; }
+  .notify-event .threshold input { width: 64px; }
+  .device-line .notify-button, .notify-footer .notify-button, .notify-buttons .notify-button { flex: 1 1 100%; }
+}

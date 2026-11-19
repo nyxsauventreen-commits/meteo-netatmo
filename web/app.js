@@ -2207,7 +2207,13 @@ async function changePassword(event) {
 /* ---------- Notifications ---------- */
 
 let notifySettings = null;
+let notifySaveTimer = null;
 const IPHONE = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const THRESHOLD_WORDS = { frost: 'à', heat: 'dès', rain: 'dès', wind: 'dès', offline: 'après' };
+
+function say(text) {
+  document.getElementById('notify-message').textContent = text;
+}
 
 function notifyRow(event, settings) {
   const row = el('div', 'notify-event');
@@ -2217,21 +2223,38 @@ function notifyRow(event, settings) {
   box.name = 'event';
   box.value = event.key;
   box.checked = settings.events.includes(event.key);
-  check.append(box, ` ${event.label}`);
+  check.append(box, el('span', '', event.label));
   row.append(check);
   if (event.limits) {
     const threshold = el('label', 'threshold');
     const input = el('input');
     input.type = 'number';
+    input.inputMode = 'decimal';
     input.name = `threshold-${event.key}`;
     [input.min, input.max] = event.limits;
     input.step = event.key === 'offline' ? '1' : '0.5';
     input.value = settings.thresholds[event.key];
-    const word = { frost: 'à', heat: 'dès', rain: 'dès', wind: 'dès', offline: 'après' }[event.key];
-    threshold.append(word, input, event.unit);
+    input.setAttribute('aria-label', `Seuil : ${event.label}`);
+    threshold.append(el('span', 'threshold-word', THRESHOLD_WORDS[event.key]), input, el('span', 'threshold-unit', event.unit));
     row.append(threshold);
   }
+  row.classList.toggle('off', !box.checked);
   return row;
+}
+
+function stationChips(settings) {
+  if (!settings.stations_known.length) return [el('span', 'muted', 'Ajoutez d’abord une station.')];
+  return settings.stations_known.map((station) => {
+    const chip = el('button', '', station.name);
+    chip.type = 'button';
+    chip.dataset.station = station.id;
+    chip.setAttribute('aria-pressed', String(settings.stations.includes(station.id)));
+    chip.addEventListener('click', () => {
+      chip.setAttribute('aria-pressed', String(chip.getAttribute('aria-pressed') !== 'true'));
+      saveNotificationsSoon(0);
+    });
+    return chip;
+  });
 }
 
 function pushSupported() {
@@ -2253,30 +2276,25 @@ async function renderPushState() {
   const state = document.getElementById('push-state');
   const button = document.getElementById('push-toggle');
   const devices = notifySettings ? notifySettings.devices : 0;
-  const others = devices ? ` Activées sur ${devices} appareil${devices > 1 ? 's' : ''} en tout.` : '';
-  document.getElementById('push-iphone').hidden = !IPHONE;
+  const others = devices ? ` (${devices} appareil${devices > 1 ? 's' : ''} en tout)` : '';
+  document.getElementById('push-iphone').hidden = !IPHONE || pushSupported();
+  button.hidden = true;
   if (!pushSupported()) {
-    state.textContent = IPHONE
-      ? 'Ouvrez le site depuis son icône sur l’écran d’accueil pour activer les notifications.'
-      : 'Ce navigateur ne reçoit pas les notifications.';
-    button.hidden = true;
+    state.textContent = IPHONE ? 'Ouvrez le site depuis son icône d’écran d’accueil.' : 'Ce navigateur ne reçoit pas les alertes.';
     return;
   }
-  button.hidden = false;
   let subscription = null;
   try {
     subscription = await currentSubscription();
   } catch { /* the state stays unknown: the button still works */ }
   if (Notification.permission === 'denied') {
-    state.textContent = `Notifications bloquées pour ce site dans les réglages du navigateur.${others}`;
-    button.hidden = true;
-  } else if (subscription) {
-    state.textContent = `Activées sur cet appareil.${others}`;
-    button.textContent = 'Désactiver sur cet appareil';
-  } else {
-    state.textContent = `Pas encore activées sur cet appareil.${others}`;
-    button.textContent = 'Activer sur cet appareil';
+    state.textContent = `Bloquées dans les réglages du navigateur${others}.`;
+    return;
   }
+  button.hidden = false;
+  button.classList.toggle('primary', !subscription);
+  state.textContent = subscription ? `✓ Activées ici${others}` : `Pas activées ici${others}`;
+  button.textContent = subscription ? 'Désactiver' : 'Activer';
 }
 
 async function postJson(path, body) {
@@ -2291,17 +2309,16 @@ async function postJson(path, body) {
 }
 
 async function togglePush() {
-  const message = document.getElementById('notify-message');
   const button = document.getElementById('push-toggle');
   button.disabled = true;
-  message.textContent = '';
+  say('');
   try {
     const existing = await currentSubscription();
     if (existing) {
       await postJson('/api/push/unsubscribe', { endpoint: existing.endpoint });
       await existing.unsubscribe();
       notifySettings.devices = Math.max(0, notifySettings.devices - 1);
-      message.textContent = 'Notifications désactivées sur cet appareil.';
+      say('Désactivées sur cet appareil.');
     } else {
       if (await Notification.requestPermission() !== 'granted') throw new Error('Autorisation refusée : rien n’a été activé.');
       const registration = await navigator.serviceWorker.ready;
@@ -2314,10 +2331,10 @@ async function togglePush() {
         await subscription.unsubscribe();
         throw error;
       }
-      message.textContent = 'Notifications activées sur cet appareil. « Envoyer un test » pour vérifier.';
+      say('Activées sur cet appareil : « Envoyer un test » pour vérifier.');
     }
   } catch (error) {
-    message.textContent = error.message || 'Activation impossible, réessayez.';
+    say(error.message || 'Activation impossible, réessayez.');
   } finally {
     button.disabled = false;
     renderPushState();
@@ -2337,43 +2354,61 @@ function renderMailbox(settings) {
 
 function showNotifySettings(settings) {
   notifySettings = settings;
-  const form = document.getElementById('notify-form');
-  form.elements.email.checked = settings.email;
-  form.elements.email.disabled = !settings.email_available;
-  form.elements.address.value = settings.address;
-  form.querySelector('.notify-address').hidden = !settings.email_available;
-  document.getElementById('email-off').hidden = settings.email_available || settings.mailbox.may_change;
+  const email = document.getElementById('notify-email');
+  email.checked = settings.email;
+  email.disabled = !settings.email_available;
+  document.getElementById('notify-address').value = settings.address;
+  document.querySelector('#notify-email-block .notify-address').hidden = !settings.email_available || !settings.email;
+  document.getElementById('email-off').hidden = settings.email_available;
+  document.getElementById('email-off').textContent = settings.mailbox.may_change
+    ? 'Réglez d’abord la boîte Gmail d’envoi, plus bas.'
+    : 'L’envoi d’e-mails n’est pas encore réglé par l’administrateur.';
+  document.getElementById('notify-stations').replaceChildren(...stationChips(settings));
   document.getElementById('notify-events').replaceChildren(...settings.events_known.map((event) => notifyRow(event, settings)));
   renderMailbox(settings);
   renderPushState();
 }
 
 async function loadNotifications() {
-  const message = document.getElementById('notify-message');
   try {
     const response = await fetch('/api/notifications');
     if (!response.ok) throw new Error();
     showNotifySettings(await response.json());
-    message.textContent = '';
+    say('');
   } catch {
-    message.textContent = 'Serveur injoignable, réessayez.';
+    say('Serveur injoignable, réessayez.');
   }
 }
 
-async function saveNotifications(event) {
-  event.preventDefault();
-  const form = event.target;
-  const message = document.getElementById('notify-message');
+function notifyForm() {
+  const panel = document.getElementById('notify-panel');
   const thresholds = {};
-  for (const input of form.querySelectorAll('input[type="number"]')) {
-    thresholds[input.name.replace('threshold-', '')] = Number(input.value);
+  for (const input of panel.querySelectorAll('#notify-events input[type="number"]')) {
+    if (input.value !== '' && input.checkValidity()) thresholds[input.name.replace('threshold-', '')] = Number(input.value);
   }
-  const body = {
-    email: form.elements.email.checked,
-    address: form.elements.address.value.trim(),
-    events: [...form.querySelectorAll('input[name="event"]:checked')].map((box) => box.value),
+  return {
+    email: document.getElementById('notify-email').checked,
+    address: document.getElementById('notify-address').value.trim(),
+    events: [...panel.querySelectorAll('#notify-events input[name="event"]:checked')].map((box) => box.value),
+    stations: [...panel.querySelectorAll('#notify-stations [aria-pressed="true"]')].map((chip) => chip.dataset.station),
     thresholds,
   };
+}
+
+// Every change is saved on its own, shortly after: there is no button to forget.
+function saveNotificationsSoon(delay = 600) {
+  clearTimeout(notifySaveTimer);
+  notifySaveTimer = setTimeout(saveNotifications, delay);
+}
+
+async function saveNotifications() {
+  const body = notifyForm();
+  if (body.email && !body.address) {
+    document.querySelector('#notify-email-block .notify-address').hidden = false;
+    say('Indiquez votre adresse e-mail.');
+    return;
+  }
+  say('Enregistrement…');
   try {
     const response = await fetch('/api/notifications', {
       method: 'PATCH',
@@ -2382,25 +2417,29 @@ async function saveNotifications(event) {
     });
     const answer = await response.json();
     if (!response.ok) throw new Error(answer.error);
-    showNotifySettings({ ...notifySettings, ...answer });
-    message.textContent = 'Enregistré.';
+    notifySettings = { ...notifySettings, ...answer };
+    document.querySelectorAll('#notify-events .notify-event').forEach((row) => {
+      row.classList.toggle('off', !row.querySelector('input[name="event"]').checked);
+    });
+    document.querySelector('#notify-email-block .notify-address').hidden = !answer.email;
+    const missing = !answer.events.length ? 'Cochez au moins un événement.'
+      : !answer.stations.length ? 'Choisissez au moins une station.' : '';
+    say(missing ? `Enregistré. ${missing}` : 'Enregistré ✓');
   } catch (error) {
-    message.textContent = error.message || 'Serveur injoignable, réessayez.';
+    say(error.message || 'Serveur injoignable, réessayez.');
   }
 }
 
 async function testNotifications() {
-  const message = document.getElementById('notify-message');
   const button = document.getElementById('notify-test');
   button.disabled = true;
-  message.textContent = 'Envoi…';
+  say('Envoi…');
   try {
     const answer = await postJson('/api/notifications/test', {});
     const names = { push: 'appareils', email: 'e-mail' };
-    message.textContent = Object.entries(answer.results)
-      .map(([channel, error]) => `${names[channel]} : ${error || 'envoyé'}`).join(' · ');
+    say(Object.entries(answer.results).map(([channel, error]) => `${names[channel]} : ${error || 'envoyé ✓'}`).join(' · '));
   } catch (error) {
-    message.textContent = error.message || 'Serveur injoignable, réessayez.';
+    say(error.message || 'Serveur injoignable, réessayez.');
   } finally {
     button.disabled = false;
   }
@@ -2416,7 +2455,7 @@ async function saveMailbox(event) {
   try {
     await postJson('/api/mailbox', { user: form.elements.user.value.trim(), password: form.elements.password.value });
     form.reset();
-    message.textContent = 'Boîte enregistrée : cochez « Aussi par e-mail » plus haut, puis faites un test.';
+    message.textContent = 'Boîte enregistrée : cochez « Recevoir aussi un e-mail », puis faites un test.';
     await loadNotifications();
   } catch (error) {
     message.textContent = error.message || 'Serveur injoignable, réessayez.';
@@ -2648,10 +2687,14 @@ document.getElementById('user-open').addEventListener('click', (event) => {
 });
 document.getElementById('password-open').addEventListener('click', () => openPanel('password-panel'));
 document.getElementById('notify-open').addEventListener('click', () => openPanel('notify-panel'));
+document.getElementById('notify-open-options').addEventListener('click', () => openPanel('notify-panel'));
 document.getElementById('notify-panel').addEventListener('toggle', (event) => {
   if (event.target.open) loadNotifications();
 });
-document.getElementById('notify-form').addEventListener('submit', saveNotifications);
+document.getElementById('notify-events').addEventListener('change', () => saveNotificationsSoon(0));
+document.getElementById('notify-events').addEventListener('input', () => saveNotificationsSoon());
+document.getElementById('notify-email').addEventListener('change', () => saveNotificationsSoon(0));
+document.getElementById('notify-address').addEventListener('change', () => saveNotificationsSoon(0));
 document.getElementById('notify-test').addEventListener('click', testNotifications);
 document.getElementById('push-toggle').addEventListener('click', togglePush);
 document.getElementById('mailbox-form').addEventListener('submit', saveMailbox);

@@ -12,7 +12,7 @@
   <main class="guide">
     <p><a href="/">← Retour au tableau de bord</a></p>
     <h1>Guide</h1>
-    <p class="muted">Version 2.3</p>
+    <p class="muted">Version 2.4</p>
 
     <nav class="card guide-menu" aria-label="Sommaire">
       <a href="#station">Ajouter une station</a>
@@ -98,19 +98,16 @@
 
     <section id="notifications" class="card">
       <h2>Notifications</h2>
-      <p>Le site peut vous prévenir lui-même, comme un message, sans appli à installer, et aussi par e-mail. Ouvrez le menu en haut à droite<span class="online-only"> (votre nom)</span>, puis <strong>Mes notifications</strong>.</p>
-      <ul>
-        <li><strong>Sur un appareil :</strong> touchez <strong>Activer sur cet appareil</strong> et acceptez la demande du navigateur. Recommencez sur chaque appareil : téléphone, tablette ou PC.</li>
-        <li><strong>Sur iPhone :</strong> ajoutez d'abord le site à l'écran d'accueil (bouton Partager de Safari, puis « Sur l'écran d'accueil »). Ouvrez-le depuis cette icône, puis activez.</li>
-        <li><strong>Par e-mail :</strong> cochez <strong>Aussi par e-mail</strong> et indiquez votre adresse. Cette option apparaît une fois la boîte d'envoi configurée<span class="online-only"> par l'administrateur</span>.</li>
-        <li><strong>Événements :</strong> vigilance orange ou rouge, gel, chaleur, forte pluie, rafales, et station muette depuis quelques heures. Chacun a son seuil, que vous pouvez changer.</li>
-        <li>Un message part quand l'événement commence, puis plus rien jusqu'à ce qu'il soit terminé. Une nuit de gel donne donc un seul message.</li>
-        <li><strong>Envoyer un test</strong> vérifie que tout arrive bien.</li>
-        <li class="local-only">Sur le PC, les notifications partent seulement quand le programme tourne, et arrivent sur ce PC.</li>
-      </ul>
-      <h3 class="local-only">Configurer l'envoi d'e-mails</h3>
-      <h3 class="online-only">Configurer l'envoi d'e-mails (administrateur)</h3>
-      <p>Dans <strong>Mes notifications</strong>, la partie <strong>Boîte Gmail qui envoie les e-mails</strong> guide pas à pas : validation en deux étapes du compte Gmail du site, puis un <strong>mot de passe d'application</strong> de 16 lettres à coller dans la page. Le site vérifie la connexion avant d'enregistrer, et ne réaffiche jamais ce mot de passe.</p>
+      <p>Le site peut vous prévenir lui-même, comme un message, sans appli à installer, et aussi par e-mail. Ouvrez <strong>Mes notifications</strong> depuis le menu en haut à droite<span class="online-only"> (votre nom)</span>, ou le bouton 🔔 de <strong>Dates, courbes et options</strong>. Au départ, tout est désactivé. Chaque changement est enregistré tout seul.</p>
+      <ol>
+        <li><strong>Cet appareil :</strong> touchez <strong>Activer</strong> et acceptez la demande du navigateur. Recommencez sur chaque appareil : téléphone, tablette ou PC. Sur iPhone, ajoutez d'abord le site à l'écran d'accueil (bouton Partager de Safari, puis « Sur l'écran d'accueil »), et ouvrez-le depuis cette icône.</li>
+        <li><strong>Pour quelles stations :</strong> touchez les stations qui doivent vous prévenir. Les autres restent silencieuses.</li>
+        <li><strong>Quand prévenir :</strong> cochez les événements voulus : vigilance orange ou rouge, gel, chaleur, forte pluie, rafales, station muette. Chacun a son seuil, que vous pouvez changer.</li>
+        <li><strong>Aussi par e-mail</strong>, si vous le voulez : cochez et indiquez votre adresse. Cette option apparaît une fois la boîte d'envoi réglée<span class="online-only"> par l'administrateur</span>.</li>
+      </ol>
+      <p>Un message part quand l'événement commence, puis plus rien jusqu'à ce qu'il soit terminé : une nuit de gel donne un seul message. <strong>Envoyer un test</strong> vérifie que tout arrive bien.<span class="local-only"> Sur le PC, les alertes partent seulement quand le programme tourne, et arrivent sur ce PC.</span></p>
+      <h3>Régler l'envoi d'e-mails<span class="online-only"> (administrateur)</span></h3>
+      <p><span class="local-only">En bas de <strong>Mes notifications</strong></span><span class="online-only">Dans <strong>Administration</strong>, onglet <strong>Alertes</strong></span>, la partie sur la boîte Gmail guide pas à pas : validation en deux étapes du compte Gmail du site, puis un <strong>mot de passe d'application</strong> de 16 lettres à coller. Le site vérifie la connexion avant d'enregistrer et ne réaffiche jamais ce mot de passe.<span class="online-only"> Le même onglet envoie un e-mail de test à l'adresse de votre choix.</span></p>
     </section>
 
     <section id="compte" class="card online-only">
@@ -136,6 +133,12 @@
 
     <section id="versions" class="card">
       <h2>Historique des versions</h2>
+      <h3>2.4, 19 novembre 2026</h3>
+      <ul>
+        <li>Alertes choisies station par station, toutes désactivées au départ.</li>
+        <li>Panneau Mes notifications plus clair, enregistré tout seul, adapté au téléphone, et bouton 🔔 dans Dates, courbes et options.</li>
+        <li>Boîte Gmail d'envoi et e-mail de test dans l'administration, onglet Alertes.</li>
+      </ul>
       <h3>2.3, 19 novembre 2026</h3>
       <ul>
         <li>Notifications envoyées par le site lui-même, sans appli à installer : elles remplacent ntfy.</li>

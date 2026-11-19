@@ -22,7 +22,7 @@ EVENTS = {
     "offline": ("Station muette", 3.0, "h"),
 }
 LIMITS = {"frost": (-20, 10), "heat": (20, 50), "rain": (1, 100), "wind": (20, 200), "offline": (1, 48)}
-DEFAULT_EVENTS = ["vigilance", "frost", "rain", "wind", "offline"]
+DEFAULT_EVENTS = []  # everything off until the person chooses
 STRONG = {"orange", "red"}
 LEVEL_NAMES = {"orange": "orange", "red": "rouge"}
 
@@ -36,6 +36,7 @@ def default_settings():
         "email": False,
         "address": "",
         "events": list(DEFAULT_EVENTS),
+        "stations": [],  # the stations that send alerts, chosen by the person
         "thresholds": {key: value for key, (_, value, _) in EVENTS.items() if value is not None},
     }
 
@@ -53,6 +54,9 @@ def clean_settings(form, current):
     events = form.get("events", [])
     if not isinstance(events, list) or any(event not in EVENTS for event in events):
         raise NotifyError("Événement inconnu")
+    stations = form.get("stations", current.get("stations", []))
+    if not isinstance(stations, list) or len(stations) > 50 or not all(isinstance(s, str) and len(s) <= 40 for s in stations):
+        raise NotifyError("Stations refusées")
     thresholds = dict(current["thresholds"])
     given = form.get("thresholds", {})
     if not isinstance(given, dict):
@@ -69,6 +73,7 @@ def clean_settings(form, current):
         "email": wants_email,
         "address": address,
         "events": [key for key in EVENTS if key in events],
+        "stations": list(dict.fromkeys(stations)),
         "thresholds": thresholds,
     }
 

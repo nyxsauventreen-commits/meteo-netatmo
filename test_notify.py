@@ -66,9 +66,9 @@ class Triggers(unittest.TestCase):
 
 
 class Settings(unittest.TestCase):
-    def test_defaults(self):
+    def test_everything_is_off_at_first(self):
         defaults = notify.default_settings()
-        self.assertFalse(defaults["email"])
+        self.assertEqual((defaults["events"], defaults["stations"], defaults["email"]), ([], [], False))
         self.assertEqual(defaults["thresholds"]["frost"], 0.0)
 
     def test_choices_are_kept(self):
@@ -148,7 +148,7 @@ class Collection(unittest.TestCase):
         config = {"client_id": "id", "client_secret": "s", "stations": [{**STATION, "slot": 0}]}
         self.dashboard = app.Dashboard(config, local=True)
         self.user = app.LOCAL_USER["id"]
-        self.dashboard.save_notifications(self.user, {"events": ["frost", "offline"]})
+        self.dashboard.save_notifications(self.user, {"events": ["frost", "offline"], "stations": [STATION["id"], "pas-a-moi"]})
         self.dashboard.subscribe(self.user, self.ENDPOINT, "mailto:meteo@example.invalid")
         self.sent = []
 
@@ -200,6 +200,13 @@ class Collection(unittest.TestCase):
         self.assertEqual(self.dashboard.devices(self.user), [])
         self.assertIn("réactivez", self.dashboard.status["notify_error"])
 
+    def test_only_chosen_stations_and_only_mine(self):
+        self.assertEqual(self.dashboard.notification_settings(self.user)["stations"], [STATION["id"]])
+        self.dashboard.save_notifications(self.user, {"events": ["frost"], "stations": []})
+        self.measure(-2)
+        self.check()
+        self.assertEqual(self.sent, [])
+
     def test_nothing_without_a_device_or_email(self):
         self.dashboard.unsubscribe(self.user, self.ENDPOINT)
         self.measure(-2)
@@ -219,8 +226,13 @@ class Collection(unittest.TestCase):
             self.dashboard.save_notifications(self.user, {"email": True, "address": "moi@example.fr"})
 
     def test_mailbox_saved_from_the_page_is_never_shown_back(self):
-        with mock.patch.object(smtplib, "SMTP_SSL"):
+        with mock.patch.object(smtplib, "SMTP_SSL") as server:
             self.dashboard.save_mailbox("site@example.org", "abcd efgh ijkl mnop")
+            self.dashboard.test_mailbox("moi@example.fr")
+            with self.assertRaisesRegex(notify.NotifyError, "minute"):
+                self.dashboard.test_mailbox("moi@example.fr")
+        mail = server.return_value.__enter__.return_value.send_message.call_args[0][0]
+        self.assertEqual(mail["To"], "moi@example.fr")
         page = self.dashboard.notifications_page(self.user, True)
         self.assertEqual(page["mailbox"], {"address": "site@example.org", "may_change": True, "from_page": True})
         self.assertNotIn("abcdefghijklmnop", json.dumps(page))

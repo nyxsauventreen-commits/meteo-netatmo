@@ -189,15 +189,15 @@ codes.
 Les notifications du site marchent sans réglage. Pour l'e-mail, il faut une boîte d'envoi, que
 l'administrateur règle depuis le site :
 
-1. Connectez-vous au site avec le compte administrateur, ouvrez le menu à votre nom, puis
-   **Mes notifications**.
+1. Connectez-vous au site avec le compte administrateur, ouvrez **Administration**, onglet
+   **Alertes**.
 2. La partie **Boîte Gmail qui envoie les e-mails** donne les étapes : validation en deux étapes du
    compte Gmail du site, puis un **mot de passe d'application** de 16 lettres à coller.
 3. **Vérifier et enregistrer** teste la connexion à Gmail avant de garder la boîte, dans
    `/opt/meteo-perso/data/smtp.json`. Le mot de passe n'est jamais réaffiché.
 
 Chacun peut ensuite cocher « Aussi par e-mail » et envoyer un test. Un envoi raté apparaît dans le
-journal de la page d'administration.
+journal de la page d'administration. L'onglet **Alertes** envoie aussi un e-mail de test.
 
 ## Sauvegarder
 

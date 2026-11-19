@@ -140,7 +140,7 @@ SETTING_KEY = re.compile(r"^meteo-[a-z-]{1,30}$")
 MAX_SETTINGS = 30
 MAX_SETTING_LENGTH = 300
 INVITE_BYTES = 9  # 12 characters, impossible to guess
-APP_VERSION = "2.3"
+APP_VERSION = "2.4"
 NOTIFY_TEST_EVERY = 60  # seconds between two test messages of one person
 NOTIFY_MAX_PER_POLL = 5  # messages per person and per collection, at most
 MAX_DEVICES = 10  # devices with notifications, per person
@@ -650,6 +650,8 @@ class Dashboard:
             "alerts_error": status["alerts_error"],
             "notify_error": status["notify_error"],
             "email_available": bool(self.smtp),
+            "mailbox": {"address": self.smtp["user"] if self.smtp else None, "from_page": self.saved_mailbox() is not None},
+            "notify": self.notify_usage(),
             "netatmo_calls": netatmo.calls_last_hour(),
             "netatmo_limit": NETATMO_HOURLY_LIMIT,
             "database_bytes": sum(path.stat().st_size for path in files if path.exists()),
@@ -768,6 +770,7 @@ class Dashboard:
             **self.notification_settings(user_id),
             "email_available": bool(self.smtp),
             "devices": len(self.devices(user_id)),
+            "stations_known": [{"id": s["id"], "name": s["name"]} for s in self.user_stations(user_id)],
             "push_key": self.push_keys.application_key,
             "mailbox": {
                 "address": self.smtp["user"] if self.smtp else None,
@@ -782,6 +785,8 @@ class Dashboard:
 
     def save_notifications(self, user_id, form):
         settings = notify.clean_settings(form, self.notification_settings(user_id))
+        mine = {station["id"] for station in self.user_stations(user_id)}
+        settings["stations"] = [station_id for station_id in settings["stations"] if station_id in mine]
         if settings["email"] and not self.smtp:
             raise notify.NotifyError("L'envoi d'e-mails n'est pas configuré sur ce serveur")
         with self.connect() as db:
@@ -872,6 +877,29 @@ class Dashboard:
         self.test_sent[user_id] = now
         return self.deliver(user_id, settings, "Test : notifications météo", "Les notifications arrivent bien ici.")
 
+    def notify_usage(self):
+        """How many people chose alerts, and on how many devices: for the administration."""
+        with self.connect() as db:
+            rows = db.execute("SELECT settings FROM notify_settings").fetchall()
+            devices = db.execute("SELECT COUNT(*) FROM push_subscriptions").fetchone()[0]
+        chosen = [json.loads(row["settings"]) for row in rows]
+        return {
+            "people": sum(bool(item.get("events")) and bool(item.get("stations")) for item in chosen),
+            "email": sum(bool(item.get("email")) for item in chosen),
+            "devices": devices,
+        }
+
+    def test_mailbox(self, address):
+        """Send a test email from the mailbox of the site: one a minute at most."""
+        now = time.time()
+        if now - self.test_sent.get("mailbox", 0) < NOTIFY_TEST_EVERY:
+            raise notify.NotifyError("Un test par minute au plus : patientez un peu")
+        if not notify.ADDRESS.match(address.strip()):
+            raise notify.NotifyError("Adresse e-mail incorrecte")
+        self.test_sent["mailbox"] = now
+        notify.send_email(self.smtp, address.strip(), "Test : e-mails météo",
+                          "La boîte d'envoi du site marche : les alertes par e-mail peuvent partir.")
+
     def saved_mailbox(self):
         try:
             return json.loads((DATA / "smtp.json").read_text(encoding="utf-8"))
@@ -907,7 +935,10 @@ class Dashboard:
             if not (self.devices(user_id) or settings["email"]) or not settings["events"]:
                 continue
             sent = 0
+            chosen = set(settings["stations"])
             for station in self.user_stations(user_id):
+                if station["id"] not in chosen:
+                    continue
                 with self.connect() as db:
                     latest = db.execute(
                         "SELECT * FROM measures WHERE station_id = ? ORDER BY ts DESC LIMIT 1", (station["id"],),
@@ -1944,7 +1975,7 @@ def make_handler(app, invite_code="", secure_cookie=True, password="", port=8765
                     })
             elif url.path == "/api/notifications":
                 if user:
-                    self.reply_json(200, app.notifications_page(user["id"], app.local or app.is_admin(user)))
+                    self.reply_json(200, app.notifications_page(user["id"], app.local))
                 else:
                     self.refuse_guest()
             elif url.path == "/api/push/pending":
@@ -2075,7 +2106,7 @@ def make_handler(app, invite_code="", secure_cookie=True, password="", port=8765
                 self.notification_test()
             elif self.path in ("/api/push/subscribe", "/api/push/unsubscribe"):
                 self.push_subscription(form)
-            elif self.path in ("/api/mailbox", "/api/mailbox/remove"):
+            elif self.path in ("/api/mailbox", "/api/mailbox/remove", "/api/mailbox/test"):
                 self.mailbox(form)
             elif self.path == "/api/invite":
                 self.renew_own_code()
@@ -2169,6 +2200,8 @@ def make_handler(app, invite_code="", secure_cookie=True, password="", port=8765
             try:
                 if self.path == "/api/mailbox":
                     app.save_mailbox(str(form.get("user", "")), str(form.get("password", "")))
+                elif self.path == "/api/mailbox/test":
+                    app.test_mailbox(str(form.get("address", "")))
                 else:
                     app.remove_mailbox()
             except notify.NotifyError as err:

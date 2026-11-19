@@ -233,6 +233,7 @@ function serverTiles(info) {
     tile('Base de données', size(info.database_bytes)),
     tile('Disque libre', size(info.disk_free), `sur ${size(info.disk_total)}`),
     tile('Alertes météo', info.alerts_error ? 'Indisponibles' : 'OK', info.alerts_error || ''),
+    tile('Notifications', info.notify_error ? 'Envoi raté' : 'OK', info.notify_error || 'Détail dans l’onglet Alertes'),
     tile('Erreurs sur 24 h', number(recentProblems(info)), 'Détail dans l’onglet Journal'),
   ];
 }
@@ -317,6 +318,7 @@ async function loadOverview() {
   renderUsage(overview.usage);
   renderLimits(overview);
   renderAnnouncement(overview);
+  renderAlerts(overview);
   document.getElementById('admin-log').replaceChildren(...logRows(overview.log));
   document.getElementById('log-empty').hidden = overview.log.length > 0;
   document.getElementById('admin-abandoned').replaceChildren(...overview.abandoned.map(abandonedRow));
@@ -329,7 +331,7 @@ async function loadOverview() {
   document.getElementById('journal-tab').textContent = problems ? `Journal (${problems})` : 'Journal';
 }
 
-const TABS = ['apercu', 'utilisateurs', 'stations', 'reglages', 'journal'];
+const TABS = ['apercu', 'utilisateurs', 'stations', 'reglages', 'alertes', 'journal'];
 
 function showTab(name) {
   const tab = TABS.includes(name) ? name : TABS[0];
@@ -443,6 +445,49 @@ document.getElementById('announcement-remove').addEventListener('click', () => {
   sendAnnouncement('', 0);
 });
 
+function renderAlerts(info) {
+  document.getElementById('notify-figures').replaceChildren(
+    tile('Personnes avec des alertes', number(info.notify.people), 'au moins un événement et une station'),
+    tile('Appareils', number(info.notify.devices), 'téléphones, tablettes et PC qui reçoivent'),
+    tile('Par e-mail', number(info.notify.email), info.email_available ? 'personnes' : 'boîte d’envoi à régler'),
+    tile('Dernier envoi', info.notify_error ? 'Raté' : 'OK', info.notify_error || ''),
+  );
+  document.getElementById('mailbox-state').textContent = info.mailbox.address
+    ? `Les e-mails partent de ${info.mailbox.address}.`
+    : 'Aucune boîte d’envoi : suivez ces étapes une fois.';
+  document.getElementById('mailbox-remove').hidden = !info.mailbox.from_page;
+}
+
+function saveMailbox(event) {
+  event.preventDefault();
+  const form = event.target;
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
+  say('Connexion à Gmail…');
+  post('/api/mailbox', { user: form.elements.user.value.trim(), password: form.elements.password.value }, ({ address }) => {
+    form.reset();
+    say(`Boîte enregistrée : les e-mails partiront de ${address}. Faites un test ci-dessous.`);
+    loadOverview();
+  }).finally(() => { button.disabled = false; });
+}
+
+function testMailbox(event) {
+  event.preventDefault();
+  const form = event.target;
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
+  say('Envoi…');
+  post('/api/mailbox/test', { address: form.elements.address.value.trim() }, () => {
+    say(`E-mail de test envoyé à ${form.elements.address.value.trim()} : regardez la boîte de réception, et les indésirables.`);
+  }).finally(() => { button.disabled = false; });
+}
+
+document.getElementById('mailbox-form').addEventListener('submit', saveMailbox);
+document.getElementById('mailbox-test-form').addEventListener('submit', testMailbox);
+document.getElementById('mailbox-remove').addEventListener('click', () => {
+  if (!confirm('Retirer cette boîte d’envoi ? Plus aucun e-mail ne partira.')) return;
+  post('/api/mailbox/remove', {}, () => { say('Boîte retirée.'); loadOverview(); });
+});
 document.getElementById('limits-form').addEventListener('submit', saveLimits);
 document.getElementById('limits-form').addEventListener('input', limitsHelp);
 document.getElementById('announcement-form').addEventListener('submit', publishAnnouncement);

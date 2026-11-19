@@ -42,7 +42,7 @@ the weather sources listed below.
 
 ## One program, two modes
 
-The same program (version 2.3) runs on a PC or on a server. You choose the mode when you start
+The same program (version 2.4) runs on a PC or on a server. You choose the mode when you start
 it.
 
 | | Local mode (default) | Online mode |

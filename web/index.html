@@ -76,6 +76,10 @@
           <span class="group-label">Options</span>
           <div id="view-options" class="chips" role="group" aria-label="Options des graphiques"></div>
         </div>
+        <div class="group">
+          <span class="group-label">Alertes</span>
+          <div class="chips"><button id="notify-open-options" type="button">🔔 Mes notifications</button></div>
+        </div>
       </div>
       <p id="hint" class="muted"></p>
     </details>
@@ -121,57 +125,61 @@
         <p id="password-message" class="add-message" role="status"></p>
       </form>
     </details>
-    <details id="notify-panel" class="card add-station">
+    <details id="notify-panel" class="card notify-panel">
       <summary>Mes notifications</summary>
-      <form id="notify-form" class="notify-form">
-        <fieldset class="wide">
-          <legend>Où les recevoir</legend>
-          <p class="device-line"><span id="push-state" class="push-state"></span>
-            <button id="push-toggle" class="invite-copy" type="button">Activer sur cet appareil</button></p>
-          <p class="muted notify-help">Les notifications arrivent comme un message, sans appli à installer. Activez-les sur
-            chaque appareil : téléphone, tablette ou PC.</p>
-          <p id="push-iphone" class="muted notify-help" hidden>Sur iPhone : touchez le bouton Partager de Safari, puis
-            « Sur l'écran d'accueil ». Ouvrez ensuite le site depuis cette icône et activez ici.</p>
-          <label class="check"><input name="email" type="checkbox"> Aussi par e-mail</label>
-          <label class="notify-address">Adresse e-mail
-            <input name="address" type="email" maxlength="254" autocomplete="email">
-          </label>
-          <p id="email-off" class="muted" hidden>L'envoi d'e-mails n'est pas encore configuré par l'administrateur.</p>
-        </fieldset>
-        <fieldset class="wide">
-          <legend>Quand prévenir</legend>
+      <div class="notify-body">
+        <section class="notify-block">
+          <h3>1. Cet appareil</h3>
+          <div class="device-line">
+            <span id="push-state" class="push-state"></span>
+            <button id="push-toggle" class="notify-button" type="button">Activer</button>
+          </div>
+          <p class="muted notify-help">Les alertes arrivent comme un message, sans appli à installer. À activer sur chaque appareil.</p>
+          <p id="push-iphone" class="muted notify-help" hidden>Sur iPhone : bouton Partager de Safari, « Sur l'écran d'accueil », puis ouvrez le site depuis cette icône.</p>
+        </section>
+        <section class="notify-block">
+          <h3>2. Pour quelles stations</h3>
+          <div id="notify-stations" class="chips notify-chips" role="group" aria-label="Stations qui envoient des alertes"></div>
+        </section>
+        <section class="notify-block">
+          <h3>3. Quand prévenir</h3>
           <div id="notify-events" class="notify-events"></div>
-          <p class="muted">Un message quand l'événement commence, puis plus rien jusqu'à ce qu'il soit terminé.</p>
-        </fieldset>
-        <div class="wide notify-buttons">
-          <button type="submit">Enregistrer</button>
-          <button id="notify-test" type="button">Envoyer un test</button>
+          <p class="muted notify-help">Un message au début de l'événement, puis plus rien jusqu'à sa fin.</p>
+        </section>
+        <section id="notify-email-block" class="notify-block">
+          <h3>4. Aussi par e-mail <span class="muted">(facultatif)</span></h3>
+          <label class="check"><input id="notify-email" type="checkbox"> Recevoir aussi un e-mail</label>
+          <label class="notify-address">Adresse e-mail
+            <input id="notify-address" type="email" maxlength="254" autocomplete="email" placeholder="vous@exemple.fr">
+          </label>
+          <p id="email-off" class="muted notify-help" hidden>L'envoi d'e-mails n'est pas encore réglé.</p>
+        </section>
+        <div class="notify-footer">
+          <span id="notify-message" class="notify-message" role="status"></span>
+          <button id="notify-test" class="notify-button" type="button">Envoyer un test</button>
         </div>
-        <p id="notify-message" class="add-message" role="status"></p>
-      </form>
-      <form id="mailbox-form" class="notify-form mailbox-form" hidden>
-        <fieldset class="wide">
-          <legend>Boîte Gmail qui envoie les e-mails</legend>
+        <form id="mailbox-form" class="notify-block mailbox-form" hidden>
+          <h3>Boîte Gmail qui envoie les e-mails</h3>
           <p id="mailbox-state" class="push-state"></p>
           <ol class="muted mailbox-steps">
             <li>Connectez-vous à Google avec la boîte Gmail créée pour le site.</li>
             <li>Activez la <a href="https://myaccount.google.com/signinoptions/twosv" target="_blank" rel="noopener noreferrer">validation en deux étapes ↗</a> si ce n'est pas déjà fait.</li>
-            <li>Ouvrez les <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener noreferrer">mots de passe des applications ↗</a>, tapez un nom, par exemple « Météo », puis <strong>Créer</strong>. Google affiche 16 lettres : copiez-les.</li>
-            <li>Collez ci-dessous l'adresse Gmail et ces 16 lettres, puis <strong>Vérifier et enregistrer</strong>.</li>
+            <li>Ouvrez les <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener noreferrer">mots de passe des applications ↗</a>, tapez un nom, par exemple « Météo », puis <strong>Créer</strong>. Copiez les 16 lettres.</li>
+            <li>Collez ci-dessous l'adresse Gmail et ces 16 lettres.</li>
           </ol>
-          <label>Adresse Gmail
+          <label class="notify-address">Adresse Gmail
             <input name="user" type="email" maxlength="254" autocomplete="off">
           </label>
-          <label>Mot de passe d'application (16 lettres)
+          <label class="notify-address">Mot de passe d'application (16 lettres)
             <input name="password" type="password" maxlength="64" autocomplete="new-password">
           </label>
           <div class="notify-buttons">
-            <button type="submit">Vérifier et enregistrer</button>
-            <button id="mailbox-remove" type="button" hidden>Retirer cette boîte</button>
+            <button class="notify-button primary" type="submit">Vérifier et enregistrer</button>
+            <button id="mailbox-remove" class="notify-button" type="button" hidden>Retirer cette boîte</button>
           </div>
-          <p id="mailbox-message" class="add-message" role="status"></p>
-        </fieldset>
-      </form>
+          <p id="mailbox-message" class="notify-message" role="status"></p>
+        </form>
+      </div>
     </details>
     <section id="stations" class="stations" aria-label="Dernières mesures"></section>
     <details id="forecast-panel" class="card options" hidden>
