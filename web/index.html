@@ -26,16 +26,15 @@
           <button id="theme-open" type="button" aria-expanded="false" aria-label="Mode clair ou sombre" title="Mode clair ou sombre">◐</button>
           <div id="theme-list" class="card theme-list" hidden></div>
         </div>
-        <a href="/guide" class="local-only">Guide</a>
-        <div class="user-menu online-only">
+        <div class="user-menu">
           <button id="user-open" type="button" aria-expanded="false"></button>
           <div id="user-list" class="card theme-list" hidden>
             <a href="/guide">Guide</a>
-            <button id="invite-open" type="button" hidden>Inviter quelqu'un</button>
+            <button id="invite-open" class="online-only" type="button" hidden>Inviter quelqu'un</button>
             <button id="notify-open" type="button">Mes notifications</button>
-            <button id="password-open" type="button">Mon mot de passe</button>
-            <button id="admin-open" type="button" hidden>Administration</button>
-            <button id="logout" type="button">Se déconnecter</button>
+            <button id="password-open" class="online-only" type="button">Mon mot de passe</button>
+            <button id="admin-open" class="online-only" type="button" hidden>Administration</button>
+            <button id="logout" class="online-only" type="button">Se déconnecter</button>
           </div>
         </div>
       </div>
@@ -79,35 +78,6 @@
         </div>
       </div>
       <p id="hint" class="muted"></p>
-      <section id="notify-section" class="notify-section add-station" aria-labelledby="notify-title">
-        <h3 id="notify-title" class="notify-title">Notifications</h3>
-        <form id="notify-form" class="notify-form">
-          <fieldset class="wide">
-            <legend>Où les recevoir</legend>
-            <label class="check"><input name="ntfy" type="checkbox"> Sur le téléphone, avec l'appli ntfy</label>
-            <p class="muted notify-help">Installez l'appli gratuite ntfy (Android ou iPhone), touchez « + » puis
-              abonnez-vous à ce sujet :</p>
-            <p class="topic-line"><code id="ntfy-topic"></code>
-              <button id="ntfy-copy" class="invite-copy" type="button">Copier</button></p>
-            <p class="muted notify-help">Gardez-le pour vous : qui le connaît peut lire vos notifications.</p>
-            <label class="check"><input name="email" type="checkbox"> Par e-mail</label>
-            <label class="notify-address">Adresse e-mail
-              <input name="address" type="email" maxlength="254" autocomplete="email">
-            </label>
-            <p id="email-off" class="muted" hidden>L'envoi d'e-mails n'est pas encore configuré : voir le guide.</p>
-          </fieldset>
-          <fieldset class="wide">
-            <legend>Quand prévenir</legend>
-            <div id="notify-events" class="notify-events"></div>
-            <p class="muted">Un message quand l'événement commence, puis plus rien jusqu'à ce qu'il soit terminé.</p>
-          </fieldset>
-          <div class="wide notify-buttons">
-            <button type="submit">Enregistrer</button>
-            <button id="notify-test" type="button">Envoyer un test</button>
-          </div>
-          <p id="notify-message" class="add-message" role="status"></p>
-        </form>
-      </section>
     </details>
     <details id="add-station" class="card add-station">
       <summary>Ajouter une station</summary>
@@ -149,6 +119,58 @@
         </label>
         <button type="submit">Changer</button>
         <p id="password-message" class="add-message" role="status"></p>
+      </form>
+    </details>
+    <details id="notify-panel" class="card add-station">
+      <summary>Mes notifications</summary>
+      <form id="notify-form" class="notify-form">
+        <fieldset class="wide">
+          <legend>Où les recevoir</legend>
+          <p class="device-line"><span id="push-state" class="push-state"></span>
+            <button id="push-toggle" class="invite-copy" type="button">Activer sur cet appareil</button></p>
+          <p class="muted notify-help">Les notifications arrivent comme un message, sans appli à installer. Activez-les sur
+            chaque appareil : téléphone, tablette ou PC.</p>
+          <p id="push-iphone" class="muted notify-help" hidden>Sur iPhone : touchez le bouton Partager de Safari, puis
+            « Sur l'écran d'accueil ». Ouvrez ensuite le site depuis cette icône et activez ici.</p>
+          <label class="check"><input name="email" type="checkbox"> Aussi par e-mail</label>
+          <label class="notify-address">Adresse e-mail
+            <input name="address" type="email" maxlength="254" autocomplete="email">
+          </label>
+          <p id="email-off" class="muted" hidden>L'envoi d'e-mails n'est pas encore configuré par l'administrateur.</p>
+        </fieldset>
+        <fieldset class="wide">
+          <legend>Quand prévenir</legend>
+          <div id="notify-events" class="notify-events"></div>
+          <p class="muted">Un message quand l'événement commence, puis plus rien jusqu'à ce qu'il soit terminé.</p>
+        </fieldset>
+        <div class="wide notify-buttons">
+          <button type="submit">Enregistrer</button>
+          <button id="notify-test" type="button">Envoyer un test</button>
+        </div>
+        <p id="notify-message" class="add-message" role="status"></p>
+      </form>
+      <form id="mailbox-form" class="notify-form mailbox-form" hidden>
+        <fieldset class="wide">
+          <legend>Boîte Gmail qui envoie les e-mails</legend>
+          <p id="mailbox-state" class="push-state"></p>
+          <ol class="muted mailbox-steps">
+            <li>Connectez-vous à Google avec la boîte Gmail créée pour le site.</li>
+            <li>Activez la <a href="https://myaccount.google.com/signinoptions/twosv" target="_blank" rel="noopener noreferrer">validation en deux étapes ↗</a> si ce n'est pas déjà fait.</li>
+            <li>Ouvrez les <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener noreferrer">mots de passe des applications ↗</a>, tapez un nom, par exemple « Météo », puis <strong>Créer</strong>. Google affiche 16 lettres : copiez-les.</li>
+            <li>Collez ci-dessous l'adresse Gmail et ces 16 lettres, puis <strong>Vérifier et enregistrer</strong>.</li>
+          </ol>
+          <label>Adresse Gmail
+            <input name="user" type="email" maxlength="254" autocomplete="off">
+          </label>
+          <label>Mot de passe d'application (16 lettres)
+            <input name="password" type="password" maxlength="64" autocomplete="new-password">
+          </label>
+          <div class="notify-buttons">
+            <button type="submit">Vérifier et enregistrer</button>
+            <button id="mailbox-remove" type="button" hidden>Retirer cette boîte</button>
+          </div>
+          <p id="mailbox-message" class="add-message" role="status"></p>
+        </fieldset>
       </form>
     </details>
     <section id="stations" class="stations" aria-label="Dernières mesures"></section>

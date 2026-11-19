@@ -1,18 +1,13 @@
-"""Notifications: what triggers them, and sending through ntfy (phone app) or email.
+"""Notifications: what triggers them, and sending by email (the site's own notifications are in webpush.py).
 
 Each person chooses the events and the channels. An event is sent once when it starts,
 and again only after it has ended: a frost night gives one message, not one per poll.
 """
 import email.message
-import json
 import re
-import secrets
 import smtplib
 import ssl
-import urllib.request
 
-NTFY_SERVER = "https://ntfy.sh"
-TOPIC = re.compile(r"^[A-Za-z0-9_-]{16,64}$")  # long enough that nobody can guess it
 ADDRESS = re.compile(r"^[^@\s<>\"',;]{1,64}@[^@\s<>\"',;]{1,190}\.[A-Za-z]{2,}$")
 TIMEOUT = 15
 STALE = 3600  # a reading older than this is not used for the weather events
@@ -36,14 +31,8 @@ class NotifyError(Exception):
     """A setting is refused or a message could not be sent; the text is shown to the person."""
 
 
-def new_topic():
-    return "meteo-" + secrets.token_urlsafe(18).replace("_", "x")
-
-
 def default_settings():
     return {
-        "ntfy": False,
-        "topic": new_topic(),
         "email": False,
         "address": "",
         "events": list(DEFAULT_EVENTS),
@@ -52,7 +41,7 @@ def default_settings():
 
 
 def clean_settings(form, current):
-    """Check what the page sends; the topic is chosen by the site, never by the page."""
+    """Check what the page sends."""
     if not isinstance(form, dict):
         raise NotifyError("Réglages refusés")
     address = str(form.get("address", "")).strip()
@@ -77,7 +66,6 @@ def clean_settings(form, current):
         thresholds[key] = float(value)
     return {
         **current,
-        "ntfy": form.get("ntfy") is True,
         "email": wants_email,
         "address": address,
         "events": [key for key in EVENTS if key in events],
@@ -133,22 +121,6 @@ def weather_events(settings, station, reading, warnings, now, active):
     return found
 
 
-def send_ntfy(topic, title, message, server=NTFY_SERVER, urgent=False):
-    """Publish on a ntfy topic; the JSON form keeps accents in the title."""
-    body = json.dumps({
-        "topic": topic, "title": title, "message": message,
-        "priority": 4 if urgent else 3, "tags": ["partly_sunny"],
-    }).encode()
-    request = urllib.request.Request(
-        server.rstrip("/"), data=body, method="POST", headers={"Content-Type": "application/json"},
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
-            response.read()
-    except OSError as err:
-        raise NotifyError(f"ntfy ne répond pas : {err}") from None
-
-
 def send_email(smtp, address, title, message):
     """Send through an SMTP server over TLS, e.g. Gmail with an app password."""
     if not smtp:
@@ -158,7 +130,7 @@ def send_email(smtp, address, title, message):
     mail["From"] = f"{smtp.get('sender_name', 'Météo')} <{smtp['user']}>"
     mail["To"] = address
     mail.set_content(f"{message}\n\n-- \nMessage automatique de votre tableau de bord météo. "
-                     "Les notifications se règlent dans « Dates, courbes et options », partie Notifications.")
+                     "Les notifications se règlent dans la page, menu « Mes notifications ».")
     try:
         with smtplib.SMTP_SSL(smtp.get("server", "smtp.gmail.com"), int(smtp.get("port", 465)),
                               context=ssl.create_default_context(), timeout=TIMEOUT) as server:
@@ -170,9 +142,31 @@ def send_email(smtp, address, title, message):
         raise NotifyError(f"E-mail non envoyé : {err}") from None
 
 
-def smtp_settings(config, environ):
-    """The mailbox used to send, from config.json ("smtp") or METEO_SMTP_USER / METEO_SMTP_PASSWORD."""
+def check_mailbox(user, password):
+    """Try to sign in to Gmail with an app password; the page saves the mailbox only if it works."""
+    user, password = user.strip(), password.replace(" ", "")  # Google shows it in groups of four
+    if not ADDRESS.match(user):
+        raise NotifyError("Adresse Gmail incorrecte")
+    if not 8 <= len(password) <= 64:
+        raise NotifyError("Collez le mot de passe d'application de 16 lettres donné par Google")
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=ssl.create_default_context(), timeout=TIMEOUT) as server:
+            server.login(user, password)
+    except smtplib.SMTPAuthenticationError:
+        raise NotifyError(
+            "Google refuse la connexion : il faut un mot de passe d'application, pas le mot de passe du compte"
+        ) from None
+    except (OSError, smtplib.SMTPException) as err:
+        raise NotifyError(f"Gmail injoignable : {err}") from None
+    return {"server": "smtp.gmail.com", "port": 465, "user": user, "password": password, "sender_name": "Météo"}
+
+
+def smtp_settings(config, environ, saved=None):
+    """The mailbox used to send: config.json ("smtp"), then the one saved from the page,
+    then METEO_SMTP_USER / METEO_SMTP_PASSWORD."""
     smtp = dict(config.get("smtp") or {})
+    if saved and saved.get("user") and saved.get("password"):
+        smtp = dict(saved)
     if environ.get("METEO_SMTP_USER"):
         smtp["user"] = environ["METEO_SMTP_USER"]
     if environ.get("METEO_SMTP_PASSWORD"):

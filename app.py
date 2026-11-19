@@ -33,6 +33,7 @@ import forecast
 import neighbours
 import netatmo
 import notify
+import webpush
 import stations as station_tools
 import stats
 import wind_estimate
@@ -139,9 +140,11 @@ SETTING_KEY = re.compile(r"^meteo-[a-z-]{1,30}$")
 MAX_SETTINGS = 30
 MAX_SETTING_LENGTH = 300
 INVITE_BYTES = 9  # 12 characters, impossible to guess
-APP_VERSION = "2.2"
+APP_VERSION = "2.3"
 NOTIFY_TEST_EVERY = 60  # seconds between two test messages of one person
 NOTIFY_MAX_PER_POLL = 5  # messages per person and per collection, at most
+MAX_DEVICES = 10  # devices with notifications, per person
+PUSH_SHOWN = 30 * 60  # a device that wakes up shows the messages of the last half hour
 DEMO_DAYS = 800
 DEMO_DETAILED_DAYS = 14
 DEMO_STATIONS = [
@@ -359,8 +362,8 @@ class Dashboard:
             config.get("refresh_token", ""),
         )
         self.oauth_state = None  # local mode: the Netatmo connection is made from the page
-        self.smtp = notify.smtp_settings(config, os.environ)
-        self.ntfy_server = config.get("ntfy_server") or notify.NTFY_SERVER
+        self.smtp = notify.smtp_settings(config, os.environ, self.saved_mailbox())
+        self._push_keys = None
         self.test_sent = {}  # user id -> time of the last test message
         self.wake = threading.Event()
         self.lock = threading.Lock()
@@ -413,6 +416,15 @@ class Dashboard:
             db.execute(
                 "CREATE TABLE IF NOT EXISTS notify_state (user_id INTEGER NOT NULL, station_id TEXT NOT NULL, "
                 "key TEXT NOT NULL, since INTEGER NOT NULL, PRIMARY KEY (user_id, station_id, key)) WITHOUT ROWID"
+            )
+            # Devices where a person allowed the site's notifications, and the texts they fetch.
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS push_subscriptions (endpoint TEXT PRIMARY KEY, "
+                "user_id INTEGER NOT NULL, origin TEXT NOT NULL, created INTEGER NOT NULL)"
+            )
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS push_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "user_id INTEGER NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, ts INTEGER NOT NULL)"
             )
             db.execute(
                 "CREATE TABLE IF NOT EXISTS error_log (ts INTEGER NOT NULL, kind TEXT NOT NULL, "
@@ -492,6 +504,8 @@ class Dashboard:
             db.execute("DELETE FROM invites WHERE user_id = ?", (user_id,))
             db.execute("DELETE FROM notify_settings WHERE user_id = ?", (user_id,))
             db.execute("DELETE FROM notify_state WHERE user_id = ?", (user_id,))
+            db.execute("DELETE FROM push_subscriptions WHERE user_id = ?", (user_id,))
+            db.execute("DELETE FROM push_messages WHERE user_id = ?", (user_id,))
         self.accounts.delete_user(user_id)
 
     @property
@@ -732,7 +746,7 @@ class Dashboard:
             )
 
     def notification_settings(self, user_id):
-        """The notification choices of a person; the first time, defaults with a private ntfy topic."""
+        """The notification choices of a person, or the defaults."""
         with self.connect() as db:
             row = db.execute("SELECT settings FROM notify_settings WHERE user_id = ?", (user_id,)).fetchone()
             if row:
@@ -743,11 +757,23 @@ class Dashboard:
             )
             return settings
 
-    def notifications_page(self, user_id):
+    def devices(self, user_id):
+        with self.connect() as db:
+            return [dict(row) for row in db.execute(
+                "SELECT endpoint, origin FROM push_subscriptions WHERE user_id = ?", (user_id,),
+            )]
+
+    def notifications_page(self, user_id, may_set_mailbox):
         return {
             **self.notification_settings(user_id),
             "email_available": bool(self.smtp),
-            "ntfy_server": self.ntfy_server,
+            "devices": len(self.devices(user_id)),
+            "push_key": self.push_keys.application_key,
+            "mailbox": {
+                "address": self.smtp["user"] if self.smtp else None,
+                "may_change": may_set_mailbox,
+                "from_page": self.saved_mailbox() is not None,
+            },
             "events_known": [
                 {"key": key, "label": label, "unit": unit, "limits": notify.LIMITS.get(key)}
                 for key, (label, _, unit) in notify.EVENTS.items()
@@ -768,15 +794,66 @@ class Dashboard:
                 db.execute("DELETE FROM notify_state WHERE user_id = ? AND key LIKE ?", (user_id, pattern))
         return settings
 
-    def deliver(self, settings, title, message, urgent=False):
-        """Send on every channel the person chose; return {channel: error or None}."""
-        results = {}
-        if settings["ntfy"]:
+    @property
+    def push_keys(self):
+        """The site's own key for its notifications, created the first time it is needed."""
+        if self._push_keys is None:
+            self._push_keys = webpush.Keys(DATA / "vapid.json")
+        return self._push_keys
+
+    def subscribe(self, user_id, endpoint, origin):
+        """Remember a device (phone, PC) where this person allowed the site's notifications."""
+        if not webpush.is_push_address(endpoint):
+            raise notify.NotifyError("Ce navigateur n'est pas pris en charge")
+        with self.connect() as db:
+            if db.execute("SELECT COUNT(*) FROM push_subscriptions WHERE user_id = ?", (user_id,)).fetchone()[0] >= MAX_DEVICES:
+                raise notify.NotifyError(f"{MAX_DEVICES} appareils au plus : désactivez-en un d'abord")
+            db.execute(
+                "INSERT OR REPLACE INTO push_subscriptions (endpoint, user_id, origin, created) VALUES (?, ?, ?, ?)",
+                (endpoint, user_id, origin, int(time.time())),
+            )
+
+    def unsubscribe(self, user_id, endpoint):
+        with self.connect() as db:
+            db.execute("DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint = ?", (user_id, endpoint))
+
+    def pending_messages(self, user_id, now=None):
+        """The texts the service worker shows after an empty push: the most recent ones."""
+        now = int(now or time.time())
+        with self.connect() as db:
+            db.execute("DELETE FROM push_messages WHERE ts < ?", (now - DAY,))
+            rows = db.execute(
+                "SELECT id, title, body, ts FROM push_messages WHERE user_id = ? AND ts >= ? ORDER BY id DESC LIMIT 5",
+                (user_id, now - PUSH_SHOWN),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def push(self, user_id, title, message, urgent):
+        """Keep the text for the service worker, then wake up each device. Return an error or None."""
+        devices = self.devices(user_id)
+        with self.connect() as db:
+            db.execute(
+                "INSERT INTO push_messages (user_id, title, body, ts) VALUES (?, ?, ?, ?)",
+                (user_id, title, message, int(time.time())),
+            )
+        problems, delivered = [], 0
+        for device in devices:
             try:
-                notify.send_ntfy(settings["topic"], title, message, self.ntfy_server, urgent)
-                results["ntfy"] = None
-            except notify.NotifyError as err:
-                results["ntfy"] = str(err)
+                webpush.send(self.push_keys, device["endpoint"], device["origin"], urgent)
+                delivered += 1
+            except webpush.Expired:
+                self.unsubscribe(user_id, device["endpoint"])  # the browser gave it up
+            except webpush.PushError as err:
+                problems.append(str(err))
+        if delivered:
+            return None
+        return problems[0] if problems else "Plus aucun appareil : réactivez les notifications sur votre appareil"
+
+    def deliver(self, user_id, settings, title, message, urgent=False):
+        """Send on every channel the person uses; return {channel: error or None}."""
+        results = {}
+        if self.devices(user_id):
+            results["push"] = self.push(user_id, title, message, urgent)
         if settings["email"]:
             try:
                 notify.send_email(self.smtp, settings["address"], title, message)
@@ -790,10 +867,31 @@ class Dashboard:
         if now - self.test_sent.get(user_id, 0) < NOTIFY_TEST_EVERY:
             raise notify.NotifyError("Un test par minute au plus : patientez un peu")
         settings = self.notification_settings(user_id)
-        if not (settings["ntfy"] or settings["email"]):
-            raise notify.NotifyError("Choisissez d'abord ntfy, l'e-mail ou les deux, puis enregistrez")
+        if not (self.devices(user_id) or settings["email"]):
+            raise notify.NotifyError("Activez d'abord les notifications sur cet appareil, ou l'e-mail")
         self.test_sent[user_id] = now
-        return self.deliver(settings, "Test : notifications météo", "Les notifications arrivent bien ici.")
+        return self.deliver(user_id, settings, "Test : notifications météo", "Les notifications arrivent bien ici.")
+
+    def saved_mailbox(self):
+        try:
+            return json.loads((DATA / "smtp.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+
+    def save_mailbox(self, user, password):
+        """Check the Gmail app password, then keep it in the data folder (never shown again)."""
+        mailbox = notify.check_mailbox(user, password)
+        path = DATA / "smtp.json"
+        path.write_text(json.dumps(mailbox), encoding="utf-8")
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
+        self.smtp = notify.smtp_settings(self.config, os.environ, mailbox)
+
+    def remove_mailbox(self):
+        (DATA / "smtp.json").unlink(missing_ok=True)
+        self.smtp = notify.smtp_settings(self.config, os.environ)
 
     def check_notifications(self, now=None):
         """Send what has just started for each person; called after each collection."""
@@ -806,7 +904,7 @@ class Dashboard:
             if self.local != (user_id == LOCAL_USER["id"]):
                 continue  # the list of the other mode, in a database copied from a PC
             settings = {**notify.default_settings(), **json.loads(row["settings"])}
-            if not (settings["ntfy"] or settings["email"]) or not settings["events"]:
+            if not (self.devices(user_id) or settings["email"]) or not settings["events"]:
                 continue
             sent = 0
             for station in self.user_stations(user_id):
@@ -832,7 +930,7 @@ class Dashboard:
                 for key, (title, message) in events.items():
                     if key in active or sent >= NOTIFY_MAX_PER_POLL:
                         continue
-                    results = self.deliver(settings, title, message, urgent=key.startswith("vigilance"))
+                    results = self.deliver(user_id, settings, title, message, urgent=key.startswith("vigilance"))
                     problems += [error for error in results.values() if error]
                     if any(error is None for error in results.values()):
                         sent += 1
@@ -1846,7 +1944,12 @@ def make_handler(app, invite_code="", secure_cookie=True, password="", port=8765
                     })
             elif url.path == "/api/notifications":
                 if user:
-                    self.reply_json(200, app.notifications_page(user["id"]))
+                    self.reply_json(200, app.notifications_page(user["id"], app.local or app.is_admin(user)))
+                else:
+                    self.refuse_guest()
+            elif url.path == "/api/push/pending":
+                if user:
+                    self.reply_json(200, {"messages": app.pending_messages(user["id"])})
                 else:
                     self.refuse_guest()
             elif url.path == "/api/invite":
@@ -1970,6 +2073,10 @@ def make_handler(app, invite_code="", secure_cookie=True, password="", port=8765
                 self.change_password(form)
             elif self.path == "/api/notifications/test":
                 self.notification_test()
+            elif self.path in ("/api/push/subscribe", "/api/push/unsubscribe"):
+                self.push_subscription(form)
+            elif self.path in ("/api/mailbox", "/api/mailbox/remove"):
+                self.mailbox(form)
             elif self.path == "/api/invite":
                 self.renew_own_code()
             elif self.path == "/api/admin/code":
@@ -2026,6 +2133,49 @@ def make_handler(app, invite_code="", secure_cookie=True, password="", port=8765
                 self.reply_json(422, {"error": "Utilisateur inconnu"})
                 return
             self.reply_json(200, {"code": app.renew_code(user_id)})
+
+        def site_origin(self):
+            """The address the browser used, given to the push services as the contact of the site."""
+            host = self.headers.get("Host", "")
+            if app.local or not re.fullmatch(r"[A-Za-z0-9.-]{1,100}(:\d{1,5})?", host):
+                return "mailto:meteo@example.invalid"
+            return f"https://{host}"
+
+        def push_subscription(self, form):
+            user = self.current_user()
+            if not user:
+                self.refuse_guest()
+                return
+            endpoint = str(form.get("endpoint", ""))
+            try:
+                if self.path == "/api/push/subscribe":
+                    app.subscribe(user["id"], endpoint, self.site_origin())
+                else:
+                    app.unsubscribe(user["id"], endpoint)
+            except notify.NotifyError as err:
+                self.reply_json(422, {"error": str(err)})
+            else:
+                self.reply_json(200, {"devices": len(app.devices(user["id"]))})
+
+        def mailbox(self, form):
+            """The Gmail box that sends the emails: the local user or an administrator sets it."""
+            user = self.current_user()
+            if not user:
+                self.refuse_guest()
+                return
+            if not (app.local or app.is_admin(user)):
+                self.reply_json(403, {"error": "Réservé à l'administrateur"})
+                return
+            try:
+                if self.path == "/api/mailbox":
+                    app.save_mailbox(str(form.get("user", "")), str(form.get("password", "")))
+                else:
+                    app.remove_mailbox()
+            except notify.NotifyError as err:
+                time.sleep(AUTH_DELAY)
+                self.reply_json(422, {"error": str(err)})
+            else:
+                self.reply_json(200, {"address": app.smtp["user"] if app.smtp else None})
 
         def notification_test(self):
             user = self.current_user()

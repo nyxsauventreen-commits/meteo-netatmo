@@ -186,21 +186,19 @@ codes.
 
 ## Notifications par e-mail
 
-Les notifications ntfy marchent sans réglage. Pour l'e-mail, le site a besoin d'une boîte d'envoi :
+Les notifications du site marchent sans réglage. Pour l'e-mail, il faut une boîte d'envoi, que
+l'administrateur règle depuis le site :
 
-1. Créez une adresse Gmail réservée au site. Activez la validation en deux étapes, puis créez un
-   **mot de passe d'application** dans le compte Google (Sécurité, Mots de passe des applications).
-2. Sur le serveur, ouvrez la configuration : `sudo nano /opt/meteo-perso/data/config.json`.
-3. Ajoutez ce bloc après la ligne `"client_secret"`, avec l'adresse et le mot de passe d'application :
+1. Connectez-vous au site avec le compte administrateur, ouvrez le menu à votre nom, puis
+   **Mes notifications**.
+2. La partie **Boîte Gmail qui envoie les e-mails** donne les étapes : validation en deux étapes du
+   compte Gmail du site, puis un **mot de passe d'application** de 16 lettres à coller.
+3. **Vérifier et enregistrer** teste la connexion à Gmail avant de garder la boîte, dans
+   `/opt/meteo-perso/data/smtp.json`. Le mot de passe n'est jamais réaffiché.
 
-   ```json
-   "smtp": { "server": "smtp.gmail.com", "port": 465, "user": "", "password": "", "sender_name": "Météo" },
-   ```
+Chacun peut ensuite cocher « Aussi par e-mail » et envoyer un test. Un envoi raté apparaît dans le
+journal de la page d'administration.
 
-4. Enregistrez (Ctrl+O, Entrée, Ctrl+X), puis redémarrez : `sudo docker restart meteo-perso`.
-
-Chacun peut ensuite cocher « Par e-mail » dans **Dates, courbes et options**, partie Notifications, et envoyer un test. Un envoi raté
-apparaît dans le journal de la page d'administration.
 ## Sauvegarder
 
 Tout ce qui change se trouve dans `/opt/meteo-perso/data`, comptes compris. Copiez ce dossier

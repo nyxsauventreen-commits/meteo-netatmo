@@ -12,7 +12,7 @@
   <main class="guide">
     <p><a href="/">← Retour au tableau de bord</a></p>
     <h1>Guide</h1>
-    <p class="muted">Version 2.2</p>
+    <p class="muted">Version 2.3</p>
 
     <nav class="card guide-menu" aria-label="Sommaire">
       <a href="#station">Ajouter une station</a>
@@ -98,19 +98,19 @@
 
     <section id="notifications" class="card">
       <h2>Notifications</h2>
-      <p>Le site peut vous prévenir sur le téléphone ou par e-mail. Ouvrez <strong>Dates, courbes et options</strong> : la partie <strong>Notifications</strong> est en bas<span class="online-only">. <strong>Mes notifications</strong>, dans le menu à votre nom, y mène directement</span>.</p>
+      <p>Le site peut vous prévenir lui-même, comme un message, sans appli à installer, et aussi par e-mail. Ouvrez le menu en haut à droite<span class="online-only"> (votre nom)</span>, puis <strong>Mes notifications</strong>.</p>
       <ul>
-        <li><strong>Sur le téléphone :</strong> installez l'appli gratuite <strong>ntfy</strong> (Android ou iPhone). Touchez « + » et abonnez-vous au sujet affiché dans le panneau. Gardez ce sujet pour vous : qui le connaît peut lire vos notifications.</li>
-        <li><strong>Par e-mail :</strong> indiquez votre adresse. Cette option apparaît quand l'envoi d'e-mails est configuré<span class="online-only"> par l'administrateur</span>.</li>
+        <li><strong>Sur un appareil :</strong> touchez <strong>Activer sur cet appareil</strong> et acceptez la demande du navigateur. Recommencez sur chaque appareil : téléphone, tablette ou PC.</li>
+        <li><strong>Sur iPhone :</strong> ajoutez d'abord le site à l'écran d'accueil (bouton Partager de Safari, puis « Sur l'écran d'accueil »). Ouvrez-le depuis cette icône, puis activez.</li>
+        <li><strong>Par e-mail :</strong> cochez <strong>Aussi par e-mail</strong> et indiquez votre adresse. Cette option apparaît une fois la boîte d'envoi configurée<span class="online-only"> par l'administrateur</span>.</li>
         <li><strong>Événements :</strong> vigilance orange ou rouge, gel, chaleur, forte pluie, rafales, et station muette depuis quelques heures. Chacun a son seuil, que vous pouvez changer.</li>
         <li>Un message part quand l'événement commence, puis plus rien jusqu'à ce qu'il soit terminé. Une nuit de gel donne donc un seul message.</li>
-        <li><strong>Envoyer un test</strong> vérifie que tout arrive bien, après avoir enregistré.</li>
-        <li class="local-only">Les notifications partent seulement quand le programme tourne sur le PC.</li>
+        <li><strong>Envoyer un test</strong> vérifie que tout arrive bien.</li>
+        <li class="local-only">Sur le PC, les notifications partent seulement quand le programme tourne, et arrivent sur ce PC.</li>
       </ul>
-      <div class="local-only">
-        <h3>Configurer l'envoi d'e-mails</h3>
-        <p>Créez une adresse Gmail réservée au site, activez la validation en deux étapes, puis créez un <strong>mot de passe d'application</strong> dans votre compte Google. Dans <code>config.json</code>, remplissez <code>user</code> (l'adresse Gmail) et <code>password</code> (ce mot de passe d'application) dans le bloc <code>smtp</code>, puis relancez le programme.</p>
-      </div>
+      <h3 class="local-only">Configurer l'envoi d'e-mails</h3>
+      <h3 class="online-only">Configurer l'envoi d'e-mails (administrateur)</h3>
+      <p>Dans <strong>Mes notifications</strong>, la partie <strong>Boîte Gmail qui envoie les e-mails</strong> guide pas à pas : validation en deux étapes du compte Gmail du site, puis un <strong>mot de passe d'application</strong> de 16 lettres à coller dans la page. Le site vérifie la connexion avant d'enregistrer, et ne réaffiche jamais ce mot de passe.</p>
     </section>
 
     <section id="compte" class="card online-only">
@@ -136,6 +136,12 @@
 
     <section id="versions" class="card">
       <h2>Historique des versions</h2>
+      <h3>2.3, 19 novembre 2026</h3>
+      <ul>
+        <li>Notifications envoyées par le site lui-même, sans appli à installer : elles remplacent ntfy.</li>
+        <li>Boîte Gmail d'envoi des e-mails réglée depuis la page, avec les étapes à suivre.</li>
+        <li>« Mes notifications » dans le menu en haut à droite, sur le PC aussi.</li>
+      </ul>
       <h3>2.2, 18 novembre 2026</h3>
       <ul>
         <li>Notifications sur le téléphone (appli ntfy) ou par e-mail : vigilances, gel, chaleur, forte pluie, rafales et station muette, au choix de chacun.</li>

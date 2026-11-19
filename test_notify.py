@@ -9,13 +9,14 @@ from unittest import mock
 import app
 import netatmo
 import notify
+import webpush
 
 STATION = {"id": "70:ee:50:12:34:56", "name": "Maison", "lat": 44.93, "lon": 4.89}
 NOW = 1_800_000_000
 
 
 def settings(**changes):
-    return {**notify.default_settings(), "ntfy": True, "events": list(notify.EVENTS), **changes}
+    return {**notify.default_settings(), "events": list(notify.EVENTS), **changes}
 
 
 def reading(age=600, **values):
@@ -65,17 +66,14 @@ class Triggers(unittest.TestCase):
 
 
 class Settings(unittest.TestCase):
-    def test_defaults_have_a_long_private_topic(self):
-        first, second = notify.default_settings(), notify.default_settings()
-        self.assertRegex(first["topic"], notify.TOPIC)
-        self.assertNotEqual(first["topic"], second["topic"])
-        self.assertFalse(first["ntfy"] or first["email"])
+    def test_defaults(self):
+        defaults = notify.default_settings()
+        self.assertFalse(defaults["email"])
+        self.assertEqual(defaults["thresholds"]["frost"], 0.0)
 
-    def test_page_cannot_choose_the_topic(self):
-        current = notify.default_settings()
-        cleaned = notify.clean_settings({"ntfy": True, "topic": "public", "events": ["frost"]}, current)
-        self.assertEqual(cleaned["topic"], current["topic"])
-        self.assertEqual(cleaned["events"], ["frost"])
+    def test_choices_are_kept(self):
+        cleaned = notify.clean_settings({"events": ["frost"], "thresholds": {"wind": 80}}, notify.default_settings())
+        self.assertEqual((cleaned["events"], cleaned["thresholds"]["wind"]), (["frost"], 80.0))
 
     def test_refused(self):
         current = notify.default_settings()
@@ -91,28 +89,29 @@ class Settings(unittest.TestCase):
             with self.assertRaises(notify.NotifyError, msg=form):
                 notify.clean_settings(form, current)
 
-    def test_mailbox_from_config_or_environment(self):
+    def test_mailbox_from_config_page_or_environment(self):
         self.assertIsNone(notify.smtp_settings({}, {}))
         config = {"smtp": {"user": "meteo@example.org", "password": "a"}}
         self.assertEqual(notify.smtp_settings(config, {})["password"], "a")
-        self.assertEqual(notify.smtp_settings(config, {"METEO_SMTP_PASSWORD": "b"})["password"], "b")
+        saved = {"user": "site@example.org", "password": "p"}
+        self.assertEqual(notify.smtp_settings(config, {}, saved)["user"], "site@example.org")
+        self.assertEqual(notify.smtp_settings(config, {"METEO_SMTP_PASSWORD": "b"}, saved)["password"], "b")
+
+    def test_mailbox_is_checked_with_gmail(self):
+        with mock.patch.object(smtplib, "SMTP_SSL") as server:
+            mailbox = notify.check_mailbox(" site@example.org ", "abcd efgh ijkl mnop")
+        self.assertEqual((mailbox["user"], mailbox["password"]), ("site@example.org", "abcdefghijklmnop"))
+        self.assertEqual(server.call_args[0], ("smtp.gmail.com", 465))
+        with mock.patch.object(smtplib, "SMTP_SSL") as server:
+            server.return_value.__enter__.return_value.login.side_effect = smtplib.SMTPAuthenticationError(535, b"no")
+            with self.assertRaisesRegex(notify.NotifyError, "mot de passe d'application"):
+                notify.check_mailbox("site@example.org", "abcdefghijklmnop")
+        for user, password in (("pas-une-adresse", "abcdefghijklmnop"), ("site@example.org", "court")):
+            with self.assertRaises(notify.NotifyError):
+                notify.check_mailbox(user, password)
 
 
 class Sending(unittest.TestCase):
-    def test_ntfy_message_keeps_accents(self):
-        with mock.patch("urllib.request.urlopen") as urlopen:
-            notify.send_ntfy("meteo-sujet", "Gel : Été", "−2 °C", urgent=True)
-        request = urlopen.call_args[0][0]
-        self.assertEqual(request.full_url, "https://ntfy.sh")
-        self.assertEqual(json.loads(request.data), {
-            "topic": "meteo-sujet", "title": "Gel : Été", "message": "−2 °C", "priority": 4, "tags": ["partly_sunny"],
-        })
-
-    def test_ntfy_failure(self):
-        with mock.patch("urllib.request.urlopen", side_effect=OSError("down")):
-            with self.assertRaisesRegex(notify.NotifyError, "ntfy"):
-                notify.send_ntfy("meteo-sujet", "t", "m")
-
     def test_email_goes_over_verified_tls(self):
         smtp = {"user": "meteo@example.org", "password": "secret", "sender_name": "Météo"}
         with mock.patch.object(smtplib, "SMTP_SSL") as server:
@@ -137,6 +136,8 @@ class Sending(unittest.TestCase):
 class Collection(unittest.TestCase):
     """Sending from the dashboard, in local mode (user 0)."""
 
+    ENDPOINT = "https://fcm.googleapis.com/fcm/send/appareil"
+
     def setUp(self):
         folder = tempfile.TemporaryDirectory()
         self.addCleanup(folder.cleanup)
@@ -147,7 +148,8 @@ class Collection(unittest.TestCase):
         config = {"client_id": "id", "client_secret": "s", "stations": [{**STATION, "slot": 0}]}
         self.dashboard = app.Dashboard(config, local=True)
         self.user = app.LOCAL_USER["id"]
-        self.dashboard.save_notifications(self.user, {"ntfy": True, "events": ["frost", "offline"]})
+        self.dashboard.save_notifications(self.user, {"events": ["frost", "offline"]})
+        self.dashboard.subscribe(self.user, self.ENDPOINT, "mailto:meteo@example.invalid")
         self.sent = []
 
     def measure(self, temperature, age=60):
@@ -156,48 +158,81 @@ class Collection(unittest.TestCase):
                                                       "temperature": temperature})
 
     def check(self, side_effect=None):
-        def send(topic, title, message, server, urgent):
-            self.sent.append(title)
-        with mock.patch.object(notify, "send_ntfy", side_effect=side_effect or send):
+        def send(keys, endpoint, subject, urgent):
+            self.sent.append(endpoint)
+        with mock.patch.object(webpush, "send", side_effect=side_effect or send):
             self.dashboard.check_notifications()
+
+    def titles(self):
+        return [message["title"] for message in self.dashboard.pending_messages(self.user)]
 
     def test_one_message_per_frost_episode(self):
         self.measure(-2, age=90)
         self.check()
         self.check()
-        self.assertEqual(self.sent, ["Gel : Maison"])
+        self.assertEqual(len(self.sent), 1)
+        self.assertEqual(self.titles(), ["Gel : Maison"])
         self.measure(3, age=60)
         self.check()
         self.measure(-1, age=30)
         self.check()
-        self.assertEqual(self.sent, ["Gel : Maison", "Gel : Maison"])
+        self.assertEqual(len(self.sent), 2)
+
+    def test_the_device_fetches_the_text(self):
+        self.measure(-2)
+        self.check()
+        message = self.dashboard.pending_messages(self.user)[0]
+        self.assertEqual((message["title"], message["body"]), ("Gel : Maison", "-2 °C en ce moment."))
+        later = int(time.time()) + app.PUSH_SHOWN + 1
+        self.assertEqual(self.dashboard.pending_messages(self.user, now=later), [])
 
     def test_failure_is_retried_and_reported(self):
         self.measure(-2)
-        self.check(side_effect=notify.NotifyError("ntfy ne répond pas"))
-        self.assertIn("ntfy", self.dashboard.status["notify_error"])
+        self.check(side_effect=webpush.PushError("Service de notification : erreur 500"))
+        self.assertIn("erreur 500", self.dashboard.status["notify_error"])
         self.check()
-        self.assertEqual(self.sent, ["Gel : Maison"])
+        self.assertEqual(len(self.sent), 1)
         self.assertIsNone(self.dashboard.status["notify_error"])
 
-    def test_nothing_without_a_channel(self):
-        self.dashboard.save_notifications(self.user, {"ntfy": False, "events": ["frost"]})
+    def test_expired_device_is_forgotten(self):
+        self.measure(-2)
+        self.check(side_effect=webpush.Expired("gone"))
+        self.assertEqual(self.dashboard.devices(self.user), [])
+        self.assertIn("réactivez", self.dashboard.status["notify_error"])
+
+    def test_nothing_without_a_device_or_email(self):
+        self.dashboard.unsubscribe(self.user, self.ENDPOINT)
         self.measure(-2)
         self.check()
         self.assertEqual(self.sent, [])
 
-    def test_email_needs_the_mailbox_of_the_server(self):
+    def test_only_push_services_and_ten_devices(self):
+        with self.assertRaises(notify.NotifyError):
+            self.dashboard.subscribe(self.user, "https://evil.example/x", "mailto:x@example.invalid")
+        for number in range(app.MAX_DEVICES - 1):
+            self.dashboard.subscribe(self.user, f"{self.ENDPOINT}{number}", "mailto:x@example.invalid")
+        with self.assertRaisesRegex(notify.NotifyError, "appareils au plus"):
+            self.dashboard.subscribe(self.user, f"{self.ENDPOINT}-trop", "mailto:x@example.invalid")
+
+    def test_email_needs_a_mailbox(self):
         with self.assertRaisesRegex(notify.NotifyError, "pas configuré"):
             self.dashboard.save_notifications(self.user, {"email": True, "address": "moi@example.fr"})
 
-    def test_topic_stays_the_same(self):
-        topic = self.dashboard.notification_settings(self.user)["topic"]
-        self.dashboard.save_notifications(self.user, {"ntfy": False})
-        self.assertEqual(self.dashboard.notifications_page(self.user)["topic"], topic)
+    def test_mailbox_saved_from_the_page_is_never_shown_back(self):
+        with mock.patch.object(smtplib, "SMTP_SSL"):
+            self.dashboard.save_mailbox("site@example.org", "abcd efgh ijkl mnop")
+        page = self.dashboard.notifications_page(self.user, True)
+        self.assertEqual(page["mailbox"], {"address": "site@example.org", "may_change": True, "from_page": True})
+        self.assertNotIn("abcdefghijklmnop", json.dumps(page))
+        restarted = app.Dashboard({"client_id": "id", "client_secret": "s"}, local=True)
+        self.assertEqual(restarted.smtp["password"], "abcdefghijklmnop")
+        self.dashboard.save_notifications(self.user, {"email": True, "address": "moi@example.fr"})
+        self.dashboard.remove_mailbox()
+        self.assertIsNone(self.dashboard.smtp)
 
     def test_one_test_message_a_minute(self):
-        with mock.patch.object(notify, "send_ntfy") as send:
-            self.assertEqual(self.dashboard.send_test(self.user), {"ntfy": None})
+        with mock.patch.object(webpush, "send") as send:
+            self.assertEqual(self.dashboard.send_test(self.user), {"push": None})
             with self.assertRaisesRegex(notify.NotifyError, "minute"):
                 self.dashboard.send_test(self.user)
         send.assert_called_once()
@@ -206,7 +241,7 @@ class Collection(unittest.TestCase):
         self.measure(-2)
         with mock.patch.object(self.dashboard, "collect_forecast"), mock.patch.object(self.dashboard, "collect_alerts"), \
                 mock.patch.object(netatmo, "fetch_station", side_effect=netatmo.AuthRequired("x")), \
-                mock.patch.object(notify, "send_ntfy") as send:
+                mock.patch.object(webpush, "send") as send:
             self.dashboard.tokens.data = {"refresh_token": "r"}
             self.dashboard.poll()
         send.assert_called_once()

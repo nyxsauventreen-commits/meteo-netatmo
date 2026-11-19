@@ -24,9 +24,9 @@ aucun service tiers en dehors des sources météo citées plus bas.
 - **Ciel et prévisions** heure par heure et sur 15 jours ([Open-Meteo](https://open-meteo.com/)).
   Un vent estimé s'affiche pour les stations sans anémomètre.
 - **Alertes officielles** jaunes, orange et rouges ([MeteoAlarm](https://meteoalarm.org/)).
-- **Notifications** sur le téléphone, avec l'appli [ntfy](https://ntfy.sh/), ou par e-mail :
-  vigilances, gel, chaleur, forte pluie, rafales et station muette. Chacun choisit ses événements
-  et ses seuils.
+- **Notifications** envoyées par le site lui-même, sans appli à installer (téléphone, tablette,
+  PC), ou par e-mail : vigilances, gel, chaleur, forte pluie, rafales et station muette. Chacun
+  choisit ses événements et ses seuils.
 - **Baromètre** : une tendance pour les 6 à 12 prochaines heures, calculée seulement avec la
   pression de la station.
 - **Stations voisines** : la médiane des stations publiques situées entre 1 et 10 km, pour
@@ -41,7 +41,7 @@ L'interface est en français.
 
 ## Un programme, deux modes
 
-Le même programme (version 2.2) tourne sur un PC ou sur un serveur. Le mode se choisit au
+Le même programme (version 2.3) tourne sur un PC ou sur un serveur. Le mode se choisit au
 lancement.
 
 | | Mode local (par défaut) | Mode en ligne |
@@ -99,8 +99,9 @@ port. Le dossier `version-vps/` contient seulement les outils d'installation et 
   - Open-Meteo, pour les prévisions et le vent estimé ;
   - MeteoAlarm, pour les alertes ;
   - `data.geopf.fr` et `geocoding-api.open-meteo.com`, pour retrouver une commune ;
-  - seulement si quelqu'un active les notifications : `ntfy.sh` (ou le serveur ntfy indiqué
-    par `ntfy_server`) et le serveur d'e-mails du bloc `smtp` de `config.json`.
+  - seulement si quelqu'un active les notifications : le service de notification de son
+    navigateur (Google, Mozilla, Apple ou Microsoft), qui reçoit un signal vide, et Gmail pour les
+    e-mails.
 - Il n'y a ni publicité, ni mesure d'audience, ni script venu d'un autre site.
 - Le fichier `meteoalarm-ca.pem` est un certificat public. Il permet de vérifier la
   connexion à MeteoAlarm, dont le serveur n'envoie pas son certificat intermédiaire.

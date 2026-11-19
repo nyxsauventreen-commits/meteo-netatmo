@@ -13,6 +13,7 @@ import accounts
 import app
 import netatmo
 import stations
+import webpush
 
 PASSWORD = "un-mot-de-passe-long"
 INVITE = "code-invitation"
@@ -321,15 +322,32 @@ class Web(ServerCase):
         first, second = self.sign_up("Sam"), self.sign_up("Alex")
         self.assertEqual(self.call("GET", "/api/notifications")[0].status, 401)
         self.assertEqual(self.call("POST", "/api/notifications/test", {})[0].status, 401)
-        response, content = self.call("PATCH", "/api/notifications", {"ntfy": True, "events": ["frost"]}, first)
+        response, content = self.call("PATCH", "/api/notifications", {"events": ["frost"]}, first)
         self.assertEqual(response.status, 200)
+        endpoint = {"endpoint": "https://fcm.googleapis.com/fcm/send/sam"}
+        self.assertEqual(self.call("POST", "/api/push/subscribe", endpoint, first)[0].status, 200)
         mine = json.loads(self.call("GET", "/api/notifications", cookie=first)[1])
         other = json.loads(self.call("GET", "/api/notifications", cookie=second)[1])
-        self.assertEqual((mine["ntfy"], mine["events"], other["ntfy"]), (True, ["frost"], False))
-        self.assertNotEqual(mine["topic"], other["topic"])
+        self.assertEqual((mine["events"], mine["devices"], other["devices"]), (["frost"], 1, 0))
+        self.assertEqual(self.dashboard.devices(self.accounts.list_users()[0]["id"])[0]["origin"], "https://127.0.0.1:"
+                         + str(self.server.server_port))
+        self.assertEqual(len(webpush.unb64url(mine["push_key"])), 65)
         self.assertFalse(mine["email_available"])
         refused = self.call("PATCH", "/api/notifications", {"email": True, "address": "x@example.fr"}, first)[0]
         self.assertEqual(refused.status, 422)
+        bad = {"endpoint": "https://evil.example/x"}
+        self.assertEqual(self.call("POST", "/api/push/subscribe", bad, first)[0].status, 422)
+        self.assertEqual(self.call("GET", "/api/push/pending")[0].status, 401)
+
+    def test_only_the_administrator_sets_the_mailbox(self):
+        admin, user = self.sign_up("Admin"), self.sign_up("Sam")
+        form = {"user": "site@example.org", "password": "abcdefghijklmnop"}
+        self.assertEqual(self.call("POST", "/api/mailbox", form, user)[0].status, 403)
+        self.assertFalse(json.loads(self.call("GET", "/api/notifications", cookie=user)[1])["mailbox"]["may_change"])
+        with mock.patch("smtplib.SMTP_SSL"):
+            response, content = self.call("POST", "/api/mailbox", form, admin)
+        self.assertEqual((response.status, json.loads(content)), (200, {"address": "site@example.org"}))
+        self.assertTrue(json.loads(self.call("GET", "/api/notifications", cookie=user)[1])["email_available"])
 
     def test_notification_problems_stay_in_the_admin_log(self):
         cookie = self.sign_up("Sam")

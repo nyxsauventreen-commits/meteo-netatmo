@@ -2207,6 +2207,7 @@ async function changePassword(event) {
 /* ---------- Notifications ---------- */
 
 let notifySettings = null;
+const IPHONE = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
 function notifyRow(event, settings) {
   const row = el('div', 'notify-event');
@@ -2233,17 +2234,118 @@ function notifyRow(event, settings) {
   return row;
 }
 
+function pushSupported() {
+  return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+}
+
+function keyBytes(text) {
+  const raw = atob(text.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (text.length % 4)) % 4));
+  return Uint8Array.from(raw, (c) => c.charCodeAt(0));
+}
+
+async function currentSubscription() {
+  if (!pushSupported()) return null;
+  const registration = await navigator.serviceWorker.ready;
+  return registration.pushManager.getSubscription();
+}
+
+async function renderPushState() {
+  const state = document.getElementById('push-state');
+  const button = document.getElementById('push-toggle');
+  const devices = notifySettings ? notifySettings.devices : 0;
+  const others = devices ? ` Activées sur ${devices} appareil${devices > 1 ? 's' : ''} en tout.` : '';
+  document.getElementById('push-iphone').hidden = !IPHONE;
+  if (!pushSupported()) {
+    state.textContent = IPHONE
+      ? 'Ouvrez le site depuis son icône sur l’écran d’accueil pour activer les notifications.'
+      : 'Ce navigateur ne reçoit pas les notifications.';
+    button.hidden = true;
+    return;
+  }
+  button.hidden = false;
+  let subscription = null;
+  try {
+    subscription = await currentSubscription();
+  } catch { /* the state stays unknown: the button still works */ }
+  if (Notification.permission === 'denied') {
+    state.textContent = `Notifications bloquées pour ce site dans les réglages du navigateur.${others}`;
+    button.hidden = true;
+  } else if (subscription) {
+    state.textContent = `Activées sur cet appareil.${others}`;
+    button.textContent = 'Désactiver sur cet appareil';
+  } else {
+    state.textContent = `Pas encore activées sur cet appareil.${others}`;
+    button.textContent = 'Activer sur cet appareil';
+  }
+}
+
+async function postJson(path, body) {
+  const response = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const answer = await response.json();
+  if (!response.ok) throw new Error(answer.error);
+  return answer;
+}
+
+async function togglePush() {
+  const message = document.getElementById('notify-message');
+  const button = document.getElementById('push-toggle');
+  button.disabled = true;
+  message.textContent = '';
+  try {
+    const existing = await currentSubscription();
+    if (existing) {
+      await postJson('/api/push/unsubscribe', { endpoint: existing.endpoint });
+      await existing.unsubscribe();
+      notifySettings.devices = Math.max(0, notifySettings.devices - 1);
+      message.textContent = 'Notifications désactivées sur cet appareil.';
+    } else {
+      if (await Notification.requestPermission() !== 'granted') throw new Error('Autorisation refusée : rien n’a été activé.');
+      const registration = await navigator.serviceWorker.ready;
+      const subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true, applicationServerKey: keyBytes(notifySettings.push_key),
+      });
+      try {
+        notifySettings.devices = (await postJson('/api/push/subscribe', { endpoint: subscription.endpoint })).devices;
+      } catch (error) {
+        await subscription.unsubscribe();
+        throw error;
+      }
+      message.textContent = 'Notifications activées sur cet appareil. « Envoyer un test » pour vérifier.';
+    }
+  } catch (error) {
+    message.textContent = error.message || 'Activation impossible, réessayez.';
+  } finally {
+    button.disabled = false;
+    renderPushState();
+  }
+}
+
+function renderMailbox(settings) {
+  const form = document.getElementById('mailbox-form');
+  const box = settings.mailbox;
+  form.hidden = !box.may_change;
+  if (!box.may_change) return;
+  document.getElementById('mailbox-state').textContent = box.address
+    ? `Les e-mails partent de ${box.address}.`
+    : 'Aucune boîte d’envoi pour l’instant : suivez ces étapes une fois.';
+  document.getElementById('mailbox-remove').hidden = !box.from_page;
+}
+
 function showNotifySettings(settings) {
   notifySettings = settings;
   const form = document.getElementById('notify-form');
-  form.elements.ntfy.checked = settings.ntfy;
   form.elements.email.checked = settings.email;
   form.elements.email.disabled = !settings.email_available;
   form.elements.address.value = settings.address;
-  document.getElementById('email-off').hidden = settings.email_available;
   form.querySelector('.notify-address').hidden = !settings.email_available;
-  document.getElementById('ntfy-topic').textContent = settings.topic;
+  document.getElementById('email-off').hidden = settings.email_available || settings.mailbox.may_change;
   document.getElementById('notify-events').replaceChildren(...settings.events_known.map((event) => notifyRow(event, settings)));
+  renderMailbox(settings);
+  renderPushState();
 }
 
 async function loadNotifications() {
@@ -2267,7 +2369,6 @@ async function saveNotifications(event) {
     thresholds[input.name.replace('threshold-', '')] = Number(input.value);
   }
   const body = {
-    ntfy: form.elements.ntfy.checked,
     email: form.elements.email.checked,
     address: form.elements.address.value.trim(),
     events: [...form.querySelectorAll('input[name="event"]:checked')].map((box) => box.value),
@@ -2294,14 +2395,8 @@ async function testNotifications() {
   button.disabled = true;
   message.textContent = 'Envoi…';
   try {
-    const response = await fetch('/api/notifications/test', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: '{}',
-    });
-    const answer = await response.json();
-    if (!response.ok) throw new Error(answer.error);
-    const names = { ntfy: 'ntfy', email: 'e-mail' };
+    const answer = await postJson('/api/notifications/test', {});
+    const names = { push: 'appareils', email: 'e-mail' };
     message.textContent = Object.entries(answer.results)
       .map(([channel, error]) => `${names[channel]} : ${error || 'envoyé'}`).join(' · ');
   } catch (error) {
@@ -2311,13 +2406,33 @@ async function testNotifications() {
   }
 }
 
-async function copyTopic() {
-  const topic = document.getElementById('ntfy-topic').textContent;
+async function saveMailbox(event) {
+  event.preventDefault();
+  const form = event.target;
+  const message = document.getElementById('mailbox-message');
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
+  message.textContent = 'Connexion à Gmail…';
   try {
-    await navigator.clipboard.writeText(topic);
-    document.getElementById('notify-message').textContent = 'Sujet copié.';
-  } catch {
-    document.getElementById('notify-message').textContent = 'Copiez le sujet à la main.';
+    await postJson('/api/mailbox', { user: form.elements.user.value.trim(), password: form.elements.password.value });
+    form.reset();
+    message.textContent = 'Boîte enregistrée : cochez « Aussi par e-mail » plus haut, puis faites un test.';
+    await loadNotifications();
+  } catch (error) {
+    message.textContent = error.message || 'Serveur injoignable, réessayez.';
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function removeMailbox() {
+  if (!confirm('Retirer cette boîte d’envoi ? Plus aucun e-mail ne partira.')) return;
+  try {
+    await postJson('/api/mailbox/remove', {});
+    document.getElementById('mailbox-message').textContent = 'Boîte retirée.';
+    await loadNotifications();
+  } catch (error) {
+    document.getElementById('mailbox-message').textContent = error.message || 'Serveur injoignable, réessayez.';
   }
 }
 
@@ -2391,7 +2506,7 @@ function openPanel(id) {
 function renderContent() {
   const data = view.data;
   const shown = shownData();
-  document.getElementById('user-open').textContent = `${data.user} ▾`;
+  document.getElementById('user-open').textContent = data.mode === 'local' ? 'Menu ▾' : `${data.user} ▾`;
   document.getElementById('admin-open').hidden = !data.is_admin;
   document.getElementById('invite-open').hidden = !(data.invites_open || data.is_admin);
   if (view.pinned !== null && (view.pinned < data.since || view.pinned > data.until)) view.pinned = null;
@@ -2532,18 +2647,15 @@ document.getElementById('user-open').addEventListener('click', (event) => {
   toggleUserList();
 });
 document.getElementById('password-open').addEventListener('click', () => openPanel('password-panel'));
-// The notifications are a part of « Dates, courbes et options », read when that panel opens.
-document.getElementById('notify-open').addEventListener('click', () => {
-  document.getElementById('options').open = true;
-  document.getElementById('notify-section').scrollIntoView({ block: 'start' });
-  toggleUserList(false);
-});
-document.getElementById('options').addEventListener('toggle', (event) => {
-  if (event.target.open && !notifySettings) loadNotifications();
+document.getElementById('notify-open').addEventListener('click', () => openPanel('notify-panel'));
+document.getElementById('notify-panel').addEventListener('toggle', (event) => {
+  if (event.target.open) loadNotifications();
 });
 document.getElementById('notify-form').addEventListener('submit', saveNotifications);
 document.getElementById('notify-test').addEventListener('click', testNotifications);
-document.getElementById('ntfy-copy').addEventListener('click', copyTopic);
+document.getElementById('push-toggle').addEventListener('click', togglePush);
+document.getElementById('mailbox-form').addEventListener('submit', saveMailbox);
+document.getElementById('mailbox-remove').addEventListener('click', removeMailbox);
 document.getElementById('admin-open').addEventListener('click', () => { location.href = '/admin'; });
 document.getElementById('invite-open').addEventListener('click', () => openPanel('invite-panel'));
 document.getElementById('invite-panel').addEventListener('toggle', (event) => {
